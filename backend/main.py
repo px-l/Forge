@@ -66,7 +66,7 @@ async def visitor(req: Request, call_next):
 def owned(req, pid):
     with store.conn() as c:
         r = c.execute(
-            "SELECT * FROM projects WHERE id=? AND owner=?", (pid, req.state.owner)
+            "SELECT * FROM projects WHERE id=? AND owner=? AND deleted_at IS NULL", (pid, req.state.owner)
         ).fetchone()
     if not r:
         raise HTTPException(404, "项目不存在")
@@ -98,10 +98,30 @@ async def projects(req: Request):
         return [
             dict(r)
             for r in c.execute(
-                "SELECT * FROM projects WHERE owner=? ORDER BY created DESC",
+                "SELECT * FROM projects WHERE owner=? AND deleted_at IS NULL ORDER BY created DESC",
                 (req.state.owner,),
             )
         ]
+
+
+@app.post('/api/projects/{pid}/delete')
+async def delete_project(req: Request, pid: str):
+    owned(req,pid)
+    with store.conn() as c:
+        if c.execute("SELECT id FROM tasks WHERE project_id=? AND status IN ('queued','running')",(pid,)).fetchone():
+            raise HTTPException(409,'项目正在执行，请先停止任务再删除')
+        c.execute('UPDATE projects SET deleted_at=? WHERE id=?',(store.now(),pid))
+        c.execute("UPDATE tasks SET status='cancelled' WHERE project_id=? AND status IN ('needs_input','interrupted')",(pid,))
+    return {'ok':True}
+
+
+@app.post('/api/projects/{pid}/undelete')
+async def undelete_project(req: Request, pid: str):
+    with store.conn() as c:
+        row=c.execute('SELECT id FROM projects WHERE id=? AND owner=? AND deleted_at IS NOT NULL',(pid,req.state.owner)).fetchone()
+        if not row:raise HTTPException(404,'项目不存在')
+        c.execute('UPDATE projects SET deleted_at=NULL WHERE id=?',(pid,))
+    return {'ok':True}
 
 
 class MemoryInput(BaseModel):
@@ -396,7 +416,7 @@ async def share_preview(req: Request, aid: str):
 async def shared_preview(token: str):
     digest = hashlib.sha256(token.encode()).hexdigest()
     with store.conn() as c:
-        row = c.execute("SELECT code_id FROM preview_links WHERE digest=?", (digest,)).fetchone()
+        row = c.execute("SELECT l.code_id FROM preview_links l JOIN artifacts a ON a.id=l.code_id JOIN tasks t ON t.id=a.task_id JOIN projects p ON p.id=t.project_id WHERE l.digest=? AND p.deleted_at IS NULL", (digest,)).fetchone()
     a = store.get_artifact(row['code_id']) if row else None
     if not a:
         raise HTTPException(404)

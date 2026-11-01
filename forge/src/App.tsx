@@ -28,6 +28,7 @@ import {
   Workflow,
   ExternalLink,
   Copy,
+  Trash2,
   FileText,
 } from "lucide-react";
 import ProjectMemory from "./ProjectMemory";
@@ -109,6 +110,9 @@ export default function App() {
     [answer, setAnswer] = useState(""),
     [history, setHistory] = useState(false),
     [copied, setCopied] = useState(false),
+    [deleteTarget,setDeleteTarget] = useState<Project|null>(null),
+    [deleting,setDeleting] = useState(false),
+    [deleted,setDeleted] = useState<Project|null>(null),
     [reload, setReload] = useState(0);
   const iframe = useRef<HTMLIFrameElement>(null),
     token = useRef(""),
@@ -135,6 +139,21 @@ export default function App() {
     screenshot = [...artifacts]
       .reverse()
       .find((a) => a.kind === "screenshot" && a.content.code_id === code?.id);
+  async function deleteProject() {
+    if(!deleteTarget)return;
+    setDeleting(true);setError('');
+    try{
+      await api('/projects/'+deleteTarget.id+'/delete',{});
+      setDeleted(deleteTarget);
+      if(project?.id===deleteTarget.id)reset();
+      setDeleteTarget(null);await loadProjects();
+    }catch(e){setError((e as Error).message);}finally{setDeleting(false);}
+  }
+  async function undoDelete(){
+    if(!deleted)return;
+    try{await api('/projects/'+deleted.id+'/undelete',{});setDeleted(null);await loadProjects();}
+    catch(e){setError((e as Error).message);}
+  }
   async function copyPreview() {
     if (!code) return;
     try {
@@ -342,18 +361,14 @@ export default function App() {
         </div>
         <div className="project-list">
           {projects.map((p) => (
-            <button
-              disabled={active}
-              className={
-                "project-link " + (p.id === project?.id ? "current" : "")
-              }
-              key={p.id}
-              onClick={() => openProject(p.id)}
-            >
-              <MessageSquare size={15} />
-              <span>{p.name}</span>
-            </button>
+            <div className={'project-row '+(p.id===project?.id?'current':'')} key={p.id}>
+              <button disabled={active} className={'project-link '+(p.id===project?.id?'current':'')} onClick={()=>openProject(p.id)} title={p.name}>
+                <MessageSquare size={15}/><span>{p.name}</span>
+              </button>
+              <button disabled={active} className="project-delete" title={'删除项目：'+p.name} aria-label={'删除项目：'+p.name} onClick={()=>setDeleteTarget(p)}><Trash2 size={14}/></button>
+            </div>
           ))}
+          {deleted&&<div className="delete-undo"><span>项目已删除</span><button onClick={undoDelete}>撤销删除</button></div>}
           {!projects.length && (
             <p className="no-project">
               你的下一个想法，
@@ -874,6 +889,7 @@ export default function App() {
           </div>
         )}
       </main>
+      {deleteTarget&&<div className="modal-backdrop" onClick={()=>{if(!deleting)setDeleteTarget(null);}}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="delete-project-title"><h2 id="delete-project-title">删除这个项目？</h2><p className="delete-project-name">{deleteTarget.name}</p><p>项目将从列表移除，关联的预览链接将失效。删除后可点击“撤销删除”恢复。</p><div className="memory-actions"><button className="quiet" disabled={deleting} onClick={()=>setDeleteTarget(null)}>取消</button><button className="danger-button" disabled={deleting} onClick={deleteProject}>{deleting?'正在删除…':'确认删除'}</button></div></div></div>}
       {settings && (
         <div className="modal-backdrop" onClick={() => setSettings(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>

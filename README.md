@@ -44,6 +44,7 @@ Forge 面向“从想法到可用产物”的创作与交付过程，目标是�
 | UIProof 视觉验收 | 临时 SSH 回环隧道、与原图一致的截图尺寸、像素比较、差异证据与 HTML 报告保存 | 多页面、多状态、多尺寸验收；动态区域处理；更清晰的设计语义判断 |
 | 修复与用户决策 | 差异不超过 10% 且交互正常时等待用户选择；超过 10% 自动重新生成一轮，达到上限后交给用户判断 | 按应用类型制定策略、精确修复差异区域、修复成本控制和效果趋势对比 |
 | 版本与交付 | 代码快照、历史版本恢复、HTML 下载及复制只读预览网址 | 版本差异、分支管理、链接撤销和有效期、独立应用发布及自定义域名 |
+| 项目管理 | 项目列表、删除确认、软删除与撤销恢复；删除后项目接口和预览链接不可访问，运行中任务阻止删除 | 回收站列表、保留期限和彻底清理 |
 | 数据保存与隔离 | SQLite 保存项目、任务、产物和记忆；匿名访客 cookie 隔离；预览支持项目级 localStorage 与标签页级 sessionStorage | 用户身份与权限、跨设备访问、业务数据迁移、备份及产物对象存储 |
 | 演示与部署 | 固定待办演示、本地运行、Docker Compose，以及 yun2 上的应用和隔离 Worker 部署 | 域名与 HTTPS、自动发布回滚、运行监控 |
 
@@ -208,7 +209,7 @@ APP_ORIGIN=http://localhost:8010 docker compose up --build -d
 ### yun2 部署
 
 - 服务器入口：`http://120.53.16.86/`（TCP 80 已放行，公网访问已验证）。
-- 发布目录：`/opt/forge/releases/20261101-1`；服务通过 Docker 重启策略自动恢复。
+- 发布目录：`/opt/forge/current` 指向当前发布目录；服务通过 Docker 重启策略自动恢复。
 - 云端 `.env`：`/opt/forge/.env`，权限 `600`，独立复制，不提交 Git。
 - 持久数据：`/opt/forge/data`；本地项目数据没有自动迁移到云端。
 - 服务：`forge-app-1`（80 → 8010）、`forge-runner-1`（内部网络，无公网端口）。
@@ -218,7 +219,7 @@ APP_ORIGIN=http://localhost:8010 docker compose up --build -d
 服务器上管理服务：
 
 ```bash
-cd /opt/forge/releases/20261101-1
+cd /opt/forge/current
 docker compose -f deploy/compose.yun2.yaml ps
 docker compose -f deploy/compose.yun2.yaml logs --tail 100 app
 docker compose -f deploy/compose.yun2.yaml restart app

@@ -380,3 +380,47 @@ async def test_developer_receives_memory_and_prior_requests(monkeypatch):
     assert r['requirements']['summary']=='原始说明'
     assert r['requirements']['features']==['原有功能','新增搜索']
     assert store.get_artifact(r['code_id'])['content']['memory_id']=='snapshot'
+
+@pytest.mark.asyncio
+async def test_delete_restore_and_shared_preview_access(monkeypatch):
+    from httpx import AsyncClient,ASGITransport
+    from backend.main import app
+    async def passed(s):return {'passed':True,'feedback':{}}
+    monkeypatch.setattr(workflow,'validate',passed)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),base_url='http://test') as c:
+            result=(await c.post('/api/projects',json={'prompt':'删除功能测试','demo':True})).json();pid=result['project_id']
+            for _ in range(100):
+                project=(await c.get('/api/projects/'+pid)).json()
+                if project['tasks'][-1]['status']=='completed':break
+                await asyncio.sleep(.02)
+            code=project['current_code_id']
+            url=(await c.post('/api/artifacts/'+code+'/share',json={})).json()['url']
+            async with AsyncClient(transport=ASGITransport(app=app),base_url='http://test') as other:
+                assert (await other.post('/api/projects/'+pid+'/delete',json={})).status_code==404
+                assert (await other.get(url)).status_code==200
+                assert (await c.post('/api/projects/'+pid+'/delete',json={})).status_code==200
+                assert all(p['id']!=pid for p in (await c.get('/api/projects')).json())
+                assert (await c.get('/api/projects/'+pid)).status_code==404
+                assert (await c.get('/api/artifacts/'+code+'/download')).status_code==404
+                assert (await c.post('/api/projects/'+pid+'/tasks',json={'prompt':'不能继续修改','demo':True})).status_code==404
+                assert (await other.get(url)).status_code==404
+                assert (await other.post('/api/projects/'+pid+'/undelete',json={})).status_code==404
+                assert (await c.post('/api/projects/'+pid+'/undelete',json={})).status_code==200
+                restored=(await c.get('/api/projects/'+pid)).json()
+                assert restored['current_code_id']==code and restored['memory']==project['memory']
+                assert (await other.get(url)).status_code==200
+
+@pytest.mark.asyncio
+async def test_active_project_cannot_be_deleted():
+    from httpx import AsyncClient,ASGITransport
+    from backend.main import app
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),base_url='http://test') as c:
+            await c.get('/api/health')
+            pid,tid=store.uid(),store.uid()
+            with store.conn() as db:
+                db.execute('INSERT INTO projects(id,owner,name,created) VALUES(?,?,?,?)',(pid,c.cookies.get('forge_visitor'),'active',store.now()))
+                db.execute('INSERT INTO tasks VALUES(?,?,?,?,?)',(tid,pid,'running','{"prompt":"active"}',store.now()))
+            assert (await c.post('/api/projects/'+pid+'/delete',json={})).status_code==409
+            assert (await c.get('/api/projects/'+pid)).status_code==200

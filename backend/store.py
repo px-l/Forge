@@ -36,6 +36,8 @@ def init():
             r["name"] for r in c.execute("PRAGMA table_info(projects)")
         ]:
             c.execute("ALTER TABLE projects ADD COLUMN current_code_id TEXT DEFAULT ''")
+        if "deleted_at" not in [r["name"] for r in c.execute("PRAGMA table_info(projects)")]:
+            c.execute("ALTER TABLE projects ADD COLUMN deleted_at TEXT DEFAULT NULL")
 
 
 def set_current(project_id, code_id):
