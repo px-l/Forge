@@ -61,7 +61,8 @@ async def test_repair_limit(monkeypatch):
     r = await g.ainvoke(
         state(wants_design=False), {"configurable": {"thread_id": "repair"}}
     )
-    assert calls == [1, 2] and r["repairs"] == 2 and not r["passed"]
+    assert calls == [1, 2, 3] and r["repairs"] == 3 and not r["passed"]
+    assert r["generation_stopped"] and "__interrupt__" not in r
 
 
 @pytest.mark.asyncio
@@ -294,13 +295,17 @@ async def test_small_difference_can_be_accepted(monkeypatch):
     assert '__interrupt__' not in r
 
 @pytest.mark.asyncio
-async def test_large_difference_auto_then_asks_at_limit(monkeypatch):
+async def test_large_difference_stops_after_three_generations(monkeypatch):
     async def large(s):return {'passed':False,'feedback':{'browser_passed':True,'uiproof':{'states':[{'ratio':.3}]}}}
     monkeypatch.setattr(workflow,'validate',large)
     g=workflow.build(InMemorySaver());cfg={'configurable':{'thread_id':'large-diff'}}
     r=await g.ainvoke(state(wants_design=False),cfg)
-    assert r['repairs']==2
-    assert r['__interrupt__'][0].value['automatic_limit_reached']
+    assert r['repairs']==3 and r['generation_stopped']
+    assert '__interrupt__' not in r
+    with store.conn() as c:
+        assert c.execute("SELECT count(*) FROM artifacts WHERE kind='delivery'").fetchone()[0]==0
+        errors=[__import__('json').loads(row[0]) for row in c.execute("SELECT payload FROM events WHERE task_id=?",(r['task_id'],))]
+    assert [e['message'] for e in errors if e['type']=='error']==[workflow.GENERATION_FAILURE_MESSAGE]
 
 @pytest.mark.asyncio
 async def test_share_link_works_without_owner_cookie(monkeypatch):
@@ -424,3 +429,38 @@ async def test_active_project_cannot_be_deleted():
                 db.execute('INSERT INTO tasks VALUES(?,?,?,?,?)',(tid,pid,'running','{"prompt":"active"}',store.now()))
             assert (await c.post('/api/projects/'+pid+'/delete',json={})).status_code==409
             assert (await c.get('/api/projects/'+pid)).status_code==200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('third_passed,expected',[(True,'deliver'),(False,'review_gate')])
+async def test_third_generation_can_still_pass_or_request_small_difference_review(monkeypatch,third_passed,expected):
+    async def validation(s):
+        if s['repairs']<3:return {'passed':False,'feedback':{'browser_passed':True,'uiproof':{'states':[{'ratio':.3}]}}}
+        return {'passed':third_passed,'feedback':{'browser_passed':True,'uiproof':{'states':[{'ratio':0 if third_passed else .08}]}}}
+    monkeypatch.setattr(workflow,'validate',validation)
+    r=await workflow.build(InMemorySaver()).ainvoke(state(wants_design=False),{'configurable':{'thread_id':'third-result'}})
+    assert r['repairs']==3 and not r.get('generation_stopped')
+    if expected=='review_gate':assert r['__interrupt__'][0].value['node']=='review'
+    else:assert r['passed'] and '__interrupt__' not in r
+
+
+@pytest.mark.asyncio
+async def test_stopped_task_is_terminal_and_cannot_resume(monkeypatch):
+    from httpx import AsyncClient,ASGITransport
+    from backend.main import app
+    async def large(s):return {'passed':False,'feedback':{'browser_passed':True,'uiproof':{'states':[{'ratio':.3}]}}}
+    monkeypatch.setattr(workflow,'validate',large)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),base_url='http://test') as client:
+            result=(await client.post('/api/projects',json={'prompt':'待办应用','demo':True,'wants_design':False})).json()
+            pid,tid=result['project_id'],result['task_id']
+            for _ in range(100):
+                project=(await client.get('/api/projects/'+pid)).json()
+                if project['tasks'][-1]['status']=='stopped':break
+                await asyncio.sleep(.02)
+            assert project['tasks'][-1]['status']=='stopped'
+            assert not project.get('current_code_id')
+            assert (await client.post('/api/tasks/'+tid+'/resume',json={})).status_code==400
+            stream=await client.get('/api/tasks/'+tid+'/events')
+            assert workflow.GENERATION_FAILURE_MESSAGE in stream.text
+            assert 'event: settled' in stream.text

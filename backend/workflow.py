@@ -34,6 +34,7 @@ class State(TypedDict, total=False):
     screenshot: str
     user_accepted: bool
     regenerate: bool
+    generation_stopped: bool
 
 
 def traced(name, fn):
@@ -150,21 +151,31 @@ def difference_ratio(s):
     return max(ratios)
 
 
+MAX_GENERATIONS = 3
+GENERATION_FAILURE_MESSAGE = "当前生成遇到了一些问题，请联系开发人员处理。"
+
+
 def repair_gate(s):
     ratio = difference_ratio(s)
     browser_ok = s.get("feedback", {}).get("browser_passed", False)
-    if browser_ok and ratio is not None and ratio > .10:
-        return "develop" if s.get("repairs", 0) < 2 else "review_gate"
+    retry_or_stop = "develop" if s.get("repairs", 0) < MAX_GENERATIONS else "stop_generation"
+    if ratio is not None and ratio > .10:
+        return retry_or_stop
     if s["passed"]:
         return "deliver"
     if browser_ok and ratio is not None and ratio <= .10:
         return "review_gate"
-    return "develop" if s.get("repairs", 0) < 2 else "review_gate"
+    return retry_or_stop
+
+
+def stop_generation(s):
+    event(s["task_id"], type="error", message=GENERATION_FAILURE_MESSAGE)
+    return {"generation_stopped": True, "regenerate": False, "user_accepted": False}
 
 
 def review_gate(s):
     ratio = difference_ratio(s)
-    decision = interrupt({"node":"review", "title":"网站已生成，是否重新生成？", "difference_ratio":ratio, "automatic_limit_reached":s.get("repairs",0)>=2, "code_id":s["code_id"]})
+    decision = interrupt({"node":"review", "title":"网站已生成，是否重新生成？", "difference_ratio":ratio, "automatic_limit_reached":s.get("repairs",0)>=MAX_GENERATIONS, "code_id":s["code_id"]})
     if not isinstance(decision,dict) or type(decision.get("regenerate")) is not bool:
         raise ValueError("请选择保留当前网站或重新生成")
     regenerate = decision["regenerate"]
@@ -203,6 +214,8 @@ def build(checkpointer):
     g.add_node("clarify_gate", clarify_gate)
     g.add_node("design_gate", design_gate)
     g.add_node("review_gate", review_gate)
+    g.add_node("stop_generation", stop_generation)
+    g.add_edge("stop_generation", END)
     g.add_conditional_edges("review_gate", lambda s: "develop" if s.get("regenerate") else "deliver")
     g.add_conditional_edges(
         START, lambda s: "develop" if s["mode"] == "modify" else "clarify"

@@ -91,6 +91,7 @@ const statuses: Record<string, string> = {
   failed: "执行失败",
   interrupted: "已中断",
   cancelled: "已取消",
+  stopped: "已停止",
   needs_review: "待人工检查",
 };
 export default function App() {
