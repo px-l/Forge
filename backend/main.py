@@ -12,6 +12,7 @@ from langgraph.types import Command
 load_dotenv()
 from . import store, memory
 from .workflow import build
+from .agents.model import code_model
 
 workers: dict[str, asyncio.Task] = {}
 
@@ -88,8 +89,9 @@ def task_owned(req, tid):
 async def health():
     return {
         "ok": True,
-        "configured": bool(os.getenv("DASHSCOPE_API_KEY")),
-        "model": os.getenv("CODE_MODEL", "qwen3.7-plus"),
+        "configured": bool(os.getenv("DEEPSEEK_API_KEY")),
+        "design_configured": bool(os.getenv("DASHSCOPE_API_KEY")),
+        "model": code_model(),
         "runner": os.getenv("RUNNER_URL", "http://127.0.0.1:8011"),
     }
 
@@ -110,19 +112,27 @@ async def projects(req: Request):
 async def delete_project(req: Request, pid: str):
     owned(req,pid)
     with store.conn() as c:
-        if c.execute("SELECT id FROM tasks WHERE project_id=? AND status IN ('queued','running')",(pid,)).fetchone():
+        c.execute('BEGIN IMMEDIATE')
+        tasks=c.execute('SELECT id,status FROM tasks WHERE project_id=?',(pid,)).fetchall()
+        if any(t['status'] in ('queued','running') or t['id'] in workers for t in tasks):
             raise HTTPException(409,'项目正在执行，请先停止任务再删除')
+        # Block new requests while removing persisted workflow checkpoints.
         c.execute('UPDATE projects SET deleted_at=? WHERE id=?',(store.now(),pid))
-        c.execute("UPDATE tasks SET status='cancelled' WHERE project_id=? AND status IN ('needs_input','interrupted')",(pid,))
-    return {'ok':True}
-
-
-@app.post('/api/projects/{pid}/undelete')
-async def undelete_project(req: Request, pid: str):
-    with store.conn() as c:
-        row=c.execute('SELECT id FROM projects WHERE id=? AND owner=? AND deleted_at IS NOT NULL',(pid,req.state.owner)).fetchone()
-        if not row:raise HTTPException(404,'项目不存在')
-        c.execute('UPDATE projects SET deleted_at=NULL WHERE id=?',(pid,))
+    try:
+        for task in tasks:
+            await app.state.graph.checkpointer.adelete_thread(task['id'])
+        with store.conn() as c:
+            c.execute('DELETE FROM preview_links WHERE code_id IN (SELECT a.id FROM artifacts a JOIN tasks t ON a.task_id=t.id WHERE t.project_id=?)',(pid,))
+            c.execute('DELETE FROM events WHERE task_id IN (SELECT id FROM tasks WHERE project_id=?)',(pid,))
+            c.execute('DELETE FROM artifacts WHERE task_id IN (SELECT id FROM tasks WHERE project_id=?)',(pid,))
+            c.execute('DELETE FROM memory_versions WHERE project_id=?',(pid,))
+            c.execute('DELETE FROM project_memory WHERE project_id=?',(pid,))
+            c.execute('DELETE FROM tasks WHERE project_id=?',(pid,))
+            c.execute('DELETE FROM projects WHERE id=?',(pid,))
+    except Exception:
+        with store.conn() as c:
+            c.execute('UPDATE projects SET deleted_at=NULL WHERE id=?',(pid,))
+        raise
     return {'ok':True}
 
 

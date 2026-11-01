@@ -26,7 +26,7 @@ Forge 面向“从想法到可用产物”的创作与交付过程，目标是�
                                                项目记忆与当前代码 → 下一轮修改
 ```
 
-技术栈：React、TypeScript、Vite、FastAPI、LangGraph、SQLite、Playwright，以及通过 SSH stdio 连接的 UIProof MCP。代码和图像生成接入阿里云百炼。
+技术栈：React、TypeScript、Vite、FastAPI、LangGraph、SQLite、Playwright，以及通过 SSH stdio 连接的 UIProof MCP。代码生成接入 DeepSeek；需求梳理、设计规格、视觉理解和图像生成使用阿里云百炼。
 
 ## 已实现能力与待完善项
 
@@ -44,7 +44,7 @@ Forge 面向“从想法到可用产物”的创作与交付过程，目标是�
 | UIProof 视觉验收 | 临时 SSH 回环隧道、与原图一致的截图尺寸、像素比较、差异证据与 HTML 报告保存 | 多页面、多状态、多尺寸验收；动态区域处理；更清晰的设计语义判断 |
 | 修复与用户决策 | 差异不超过 10% 且交互正常时等待用户选择；超过 10% 自动重新生成，累计三次仍不达标则停止并提示联系开发人员 | 按应用类型制定策略、精确修复差异区域、修复成本控制和效果趋势对比 |
 | 版本与交付 | 代码快照、历史版本恢复、HTML 下载及复制只读预览网址 | 版本差异、分支管理、链接撤销和有效期、独立应用发布及自定义域名 |
-| 项目管理 | 项目列表、删除确认、软删除与撤销恢复；删除后项目接口和预览链接不可访问，运行中任务阻止删除 | 回收站列表、保留期限和彻底清理 |
+| 项目管理 | 项目列表、生成期间切换项目、确认后永久删除；清理生成版本、记忆与执行记录并使预览链接失效，运行中任务需先停止 | 项目搜索、分组与批量管理 |
 | 数据保存与隔离 | SQLite 保存项目、任务、产物和记忆；匿名访客 cookie 隔离；预览支持项目级 localStorage 与标签页级 sessionStorage | 用户身份与权限、跨设备访问、业务数据迁移、备份及产物对象存储 |
 | 演示与部署 | 固定待办演示、本地运行、Docker Compose，以及 yun2 上的应用和隔离 Worker 部署 | 域名与 HTTPS、自动发布回滚、运行监控 |
 
@@ -105,10 +105,15 @@ cp .env.example .env
 编辑 `.env`：
 
 ```dotenv
-# 百炼模型服务：使用百炼 API Key，不是 RAM AccessKey
+# 代码生成：DeepSeek 官方 API
+DEEPSEEK_API_KEY=替换为你的DeepSeekAPI密钥
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+CODE_MODEL=deepseek-flash
+
+# 需求、设计及视觉模型：使用百炼 API Key，不是 RAM AccessKey
 DASHSCOPE_API_KEY=替换为你的百炼API密钥
 DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com
-CODE_MODEL=qwen3.7-plus
+TEXT_MODEL=qwen3.7-plus
 VISION_MODEL=qwen3.7-plus
 IMAGE_MODEL=qwen-image-3.0
 
@@ -127,8 +132,11 @@ UIPROOF_TIMEOUT=180
 
 配置说明：
 
-- 百炼密钥必须与接口地域匹配，并开通所选模型。上述地址对应北京地域。代码接口和图像接口共用该基础域名，请勿在 `DASHSCOPE_BASE_URL` 后追加 API 路径。
-- `VISUAL_VALIDATOR=uiproof` 使用 UIProof；设为 `model` 可使用原有模型视觉判断。未配置百炼密钥时可选择演示模式。
+- 代码开发的静态布局、交互实现和修复使用 DeepSeek，独立读取 `DEEPSEEK_API_KEY`。带设计图生成默认使用支持图片输入的 `deepseek-flash`，参考 [DeepSeek 官方视觉文档](https://api-docs.deepseek.com/guides/vision/)。`DEEPSEEK_BASE_URL` 可设为官方根地址或 `/v1` 地址，不追加 `/chat/completions`。
+- `TEXT_MODEL` 控制需求梳理与设计规格，`VISION_MODEL` 控制截图理解，`IMAGE_MODEL` 控制生图；这些能力继续使用百炼密钥。
+
+- 百炼密钥必须与接口地域匹配，并开通所选模型。上述地址对应北京地域。需求、视觉理解和图像接口共用该基础域名，请勿在 `DASHSCOPE_BASE_URL` 后追加 API 路径。
+- `VISUAL_VALIDATOR=uiproof` 使用 UIProof；设为 `model` 可使用原有模型视觉判断。密钥未配置时可选择演示模式。
 - UIProof 需要当前运行环境能够免密执行 `ssh yun2`，且已配置主机指纹。远端入口必须存在。无需修改本机全局 MCP 配置。
 - 临时隧道只提供本次待验收页面，任务结束后关闭。基准图片和验收证据会保存在 UIProof 服务器。
 - `APP_ORIGIN` 应与前端开发访问地址一致，`localhost` 和 `127.0.0.1` 不同。

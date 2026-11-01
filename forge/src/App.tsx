@@ -117,7 +117,6 @@ export default function App() {
     [manualPreviewUrl,setManualPreviewUrl] = useState(""),
     [deleteTarget,setDeleteTarget] = useState<Project|null>(null),
     [deleting,setDeleting] = useState(false),
-    [deleted,setDeleted] = useState<Project|null>(null),
     [reload, setReload] = useState(0);
   const iframe = useRef<HTMLIFrameElement>(null),
     token = useRef(""),
@@ -152,15 +151,11 @@ export default function App() {
     setDeleting(true);setError('');
     try{
       await api('/projects/'+deleteTarget.id+'/delete',{});
-      setDeleted(deleteTarget);
-      if(project?.id===deleteTarget.id)reset();
+      localStorage.removeItem("forge-app-data:"+deleteTarget.id);
+      sessionStorage.removeItem("forge-app-session:"+deleteTarget.id);
+      if(project?.id===deleteTarget.id)clearProject();
       setDeleteTarget(null);await loadProjects();
     }catch(e){setError((e as Error).message);}finally{setDeleting(false);}
-  }
-  async function undoDelete(){
-    if(!deleted)return;
-    try{await api('/projects/'+deleted.id+'/undelete',{});setDeleted(null);await loadProjects();}
-    catch(e){setError((e as Error).message);}
   }
   async function copyPreview() {
     if (!code) return;
@@ -187,12 +182,13 @@ export default function App() {
     if (id) openProject(id);
   }, []);
   async function openProject(id: string) {
-    if (active) return;
+    if (busy || deleting) return;
     selected.current = id;
     setEvents([]);
     setError("");
     setVersion("");
     setProject(null);
+    setTaskId("");
     localStorage.setItem("forge-active-project", id);
     try {
       const p = await api("/projects/" + id);
@@ -204,7 +200,7 @@ export default function App() {
       setTaskId(p.tasks?.at(-1)?.id || "");
       setTab("preview");
     } catch (e) {
-      setError(String(e));
+      if (selected.current === id) setError(String(e));
     }
   }
   useEffect(() => {
@@ -214,7 +210,7 @@ export default function App() {
     setEvents([]);
     const es = new EventSource("/api/tasks/" + taskId + "/events");
     es.onmessage = (e) => {
-      if (closed) return;
+      if (closed || selected.current !== project.id) return;
       lastEvent.current = Number(e.lastEventId);
       const item = JSON.parse(e.data);
       setEvents((old) => [...old, item]);
@@ -222,6 +218,7 @@ export default function App() {
         refresh(project.id);
     };
     es.addEventListener("settled", () => {
+      if (closed || selected.current !== project.id) return;
       es.close();
       refresh(project.id);
     });
@@ -232,7 +229,7 @@ export default function App() {
       closed = true;
       es.close();
     };
-  }, [taskId, reload]);
+  }, [taskId, reload, project?.id]);
   useEffect(() => {
     const container = end.current?.parentElement;
     if (container)
@@ -339,7 +336,10 @@ export default function App() {
     }
   }
   function reset() {
-    if (active) return;
+    if (busy || deleting) return;
+    clearProject();
+  }
+  function clearProject() {
     selected.current = "";
     setProject(null);
     setTaskId("");
@@ -358,7 +358,7 @@ export default function App() {
           </span>
           forge<span className="beta">BETA</span>
         </button>
-        <button className="new-project" onClick={reset} disabled={active}>
+        <button className="new-project" onClick={reset} disabled={busy || deleting}>
           <Plus size={17} /> 新建项目 <kbd>＋</kbd>
         </button>
         <div className="nav-item selected">
@@ -370,13 +370,12 @@ export default function App() {
         <div className="project-list">
           {projects.map((p) => (
             <div className={'project-row '+(p.id===project?.id?'current':'')} key={p.id}>
-              <button disabled={active} className={'project-link '+(p.id===project?.id?'current':'')} onClick={()=>openProject(p.id)} title={p.name}>
+              <button disabled={busy || deleting} className={'project-link '+(p.id===project?.id?'current':'')} onClick={()=>openProject(p.id)} title={p.name}>
                 <MessageSquare size={15}/><span>{p.name}</span>
               </button>
-              <button disabled={active} className="project-delete" title={'删除项目：'+p.name} aria-label={'删除项目：'+p.name} onClick={()=>setDeleteTarget(p)}><Trash2 size={14}/></button>
+              <button disabled={busy || deleting} className="project-delete" title={'删除项目：'+p.name} aria-label={'删除项目：'+p.name} onClick={()=>setDeleteTarget(p)}><Trash2 size={14}/></button>
             </div>
           ))}
-          {deleted&&<div className="delete-undo"><span>项目已删除</span><button onClick={undoDelete}>撤销删除</button></div>}
           {!projects.length && (
             <p className="no-project">
               你的下一个想法，
@@ -443,7 +442,7 @@ export default function App() {
               />
               <div className="composer-actions">
                 <div className="model-chip">
-                  <span className="model-symbol">✳</span> 千问 Agent{" "}
+                  <span className="model-symbol">✳</span> DeepSeek Agent{" "}
                   <ChevronDown size={12} />
                 </div>
                 <button
@@ -895,7 +894,7 @@ export default function App() {
         )}
       </main>
       {manualPreviewUrl&&<div className="modal-backdrop"><div className="modal" role="dialog" aria-modal="true" aria-label="复制预览网址"><h2>复制预览网址</h2><p>浏览器未允许自动复制，请选中下方网址手动复制。</p><input aria-label="预览网址" readOnly value={manualPreviewUrl} style={{width:'100%',padding:12}} onFocus={e=>e.target.select()}/><button className="primary" onClick={()=>setManualPreviewUrl('')}>关闭</button></div></div>}
-      {deleteTarget&&<div className="modal-backdrop" onClick={()=>{if(!deleting)setDeleteTarget(null);}}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="delete-project-title"><h2 id="delete-project-title">删除这个项目？</h2><p className="delete-project-name">{deleteTarget.name}</p><p>项目将从列表移除，关联的预览链接将失效。删除后可点击“撤销删除”恢复。</p><div className="memory-actions"><button className="quiet" disabled={deleting} onClick={()=>setDeleteTarget(null)}>取消</button><button className="danger-button" disabled={deleting} onClick={deleteProject}>{deleting?'正在删除…':'确认删除'}</button></div></div></div>}
+      {deleteTarget&&<div className="modal-backdrop" onClick={()=>{if(!deleting)setDeleteTarget(null);}}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="delete-project-title" onClick={e=>e.stopPropagation()}><h2 id="delete-project-title">删除这个项目？</h2><p className="delete-project-name">{deleteTarget.name}</p><p>确认后将永久删除项目、生成版本和执行记录，预览链接立即失效，删除后无法恢复。</p><div className="memory-actions"><button className="quiet" disabled={deleting} onClick={()=>setDeleteTarget(null)}>取消</button><button className="danger-button" disabled={deleting} onClick={deleteProject}>{deleting?'正在删除…':'确认删除'}</button></div></div></div>}
       {settings && (
         <div className="modal-backdrop" onClick={() => setSettings(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -910,15 +909,16 @@ export default function App() {
             <h2>模型与运行配置</h2>
             <p>密钥仅保存在服务端，浏览器不会读取。</p>
             <div className="setting-row">
-              <span>代码 / 视觉模型</span>
-              <strong>{config?.model || "qwen3.7-plus"}</strong>
+              <span>代码生成模型</span>
+              <strong>{config?.model || "deepseek-flash"}</strong>
             </div>
             <div className="setting-row">
               <span>连接状态</span>
               <strong>{config?.configured ? "已配置密钥" : "尚未配置"}</strong>
             </div>
             <pre>
-              DASHSCOPE_API_KEY=你的百炼密钥{"\n"}CODE_MODEL=qwen3.7-plus{"\n"}
+              DEEPSEEK_API_KEY=你的DeepSeek密钥{"\n"}CODE_MODEL=deepseek-flash{"\n"}
+              DASHSCOPE_API_KEY=你的百炼密钥{"\n"}
               VISION_MODEL=qwen3.7-plus{"\n"}IMAGE_MODEL=qwen-image-3.0
             </pre>
             <p>

@@ -7,31 +7,50 @@ class ModelError(Exception):
     pass
 
 
-async def ask(task_id, system, prompt, *, images=None, vision=False):
-    key = os.getenv("DASHSCOPE_API_KEY")
+DEFAULT_CODE_MODEL = "deepseek-flash"
+
+
+def code_model():
+    return os.getenv("CODE_MODEL") or DEFAULT_CODE_MODEL
+
+
+async def ask(task_id, system, prompt, *, images=None, vision=False, coding=False):
+    if coding:
+        key_name = "DEEPSEEK_API_KEY"
+        base = (os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com").rstrip("/")
+        endpoint = base + "/chat/completions"
+        model = code_model()
+        if images and model != "deepseek-flash":
+            raise ModelError("带设计图的代码生成请设置 CODE_MODEL=deepseek-flash，该模型支持图片输入。")
+    else:
+        key_name = "DASHSCOPE_API_KEY"
+        base = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com").rstrip("/")
+        endpoint = base + "/compatible-mode/v1/chat/completions"
+        model = os.getenv("VISION_MODEL" if vision else "TEXT_MODEL", "qwen3.7-plus")
+    key = os.getenv(key_name)
     if not key:
-        raise ModelError(
-            "未配置 DASHSCOPE_API_KEY。请配置服务端密钥，或新建「演示模式」任务体验流程。"
-        )
-    base = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com").rstrip("/")
+        raise ModelError(f"未配置 {key_name}。请配置服务端密钥，或新建「演示模式」任务体验流程。")
     content = [{"type": "text", "text": prompt}]
     for image in images or []:
         content.append({"type": "image_url", "image_url": {"url": image}})
     payload = {
-        "model": os.getenv("VISION_MODEL" if vision else "CODE_MODEL", "qwen3.7-plus"),
+        "model": model,
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": content},
         ],
-        "enable_thinking": False,
         "response_format": {"type": "json_object"},
         "max_tokens": 14000,
     }
+    if coding:
+        payload["thinking"] = {"type": "disabled"}
+    else:
+        payload["enable_thinking"] = False
     async with httpx.AsyncClient(timeout=180) as client:
         for attempt in range(3):
             try:
                 r = await client.post(
-                    base + "/compatible-mode/v1/chat/completions",
+                    endpoint,
                     headers={"Authorization": f"Bearer {key}"},
                     json=payload,
                 )

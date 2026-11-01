@@ -47,7 +47,7 @@ async def develop(s):
     base_html=s.get("html", "")
     if spec and not base_html and not s["demo"]:
         event(s["task_id"],type="node",node="develop",status="running",summary="正在还原页面布局")
-        layout=await ask(s["task_id"],"你是页面还原工程师。返回JSON {html:完整HTML,summary:说明}。只先实现静态页面布局与精确样式，不实现复杂业务。严格按照design_spec与参考图，为每个模块设置data-forge-section=模块id，主标题设置data-forge-title。hero必须有两个直接子容器（双列时）。其他多列模块的直接子元素就是卡片。不得添加需求外的内容；不要用Emoji，复杂素材简化为一致的内联SVG。" ,json.dumps({"requirements":s.get("requirements"),"design_spec":spec},ensure_ascii=False),images=[s["target"]] if s.get("target") else [])
+        layout=await ask(s["task_id"],"你是页面还原工程师。返回JSON {html:完整HTML,summary:说明}。只先实现静态页面布局与精确样式，不实现复杂业务。严格按照design_spec与参考图，为每个模块设置data-forge-section=模块id，主标题设置data-forge-title。hero必须有两个直接子容器（双列时）。其他多列模块的直接子元素就是卡片。不得添加需求外的内容；不要用Emoji，复杂素材简化为一致的内联SVG。" ,json.dumps({"requirements":s.get("requirements"),"design_spec":spec},ensure_ascii=False),images=[s["target"]] if s.get("target") else [],coding=True)
         if not isinstance(layout.get("html"),str) or len(layout["html"])>400000:raise ValueError("页面布局生成失败")
         base_html=constrain(layout["html"],spec)
         artifact(s["task_id"],"layout",{"html":base_html,"spec":spec,"design_id":s.get("design_id")})
@@ -82,6 +82,7 @@ async def develop(s):
                 ensure_ascii=False,
             ),
             images=[s["target"]] if s.get("target") else [],
+            coding=True,
         )
     html = result.get("html")
     if not isinstance(html, str) or "<" not in html or len(html) > 400000:

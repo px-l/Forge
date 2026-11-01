@@ -387,7 +387,7 @@ async def test_developer_receives_memory_and_prior_requests(monkeypatch):
     assert store.get_artifact(r['code_id'])['content']['memory_id']=='snapshot'
 
 @pytest.mark.asyncio
-async def test_delete_restore_and_shared_preview_access(monkeypatch):
+async def test_permanent_delete_revokes_preview_and_removes_project_data(monkeypatch):
     from httpx import AsyncClient,ASGITransport
     from backend.main import app
     async def passed(s):return {'passed':True,'feedback':{}}
@@ -410,11 +410,13 @@ async def test_delete_restore_and_shared_preview_access(monkeypatch):
                 assert (await c.get('/api/artifacts/'+code+'/download')).status_code==404
                 assert (await c.post('/api/projects/'+pid+'/tasks',json={'prompt':'不能继续修改','demo':True})).status_code==404
                 assert (await other.get(url)).status_code==404
-                assert (await other.post('/api/projects/'+pid+'/undelete',json={})).status_code==404
-                assert (await c.post('/api/projects/'+pid+'/undelete',json={})).status_code==200
-                restored=(await c.get('/api/projects/'+pid)).json()
-                assert restored['current_code_id']==code and restored['memory']==project['memory']
-                assert (await other.get(url)).status_code==200
+                assert (await other.post('/api/projects/'+pid+'/undelete',json={})).status_code in (404,405)
+                assert (await c.post('/api/projects/'+pid+'/undelete',json={})).status_code in (404,405)
+                with store.conn() as db:
+                    for table in ('projects','tasks','artifacts','events','project_memory','memory_versions','preview_links'):
+                        assert db.execute('SELECT count(*) FROM '+table).fetchone()[0]==0
+                snapshot=await app.state.graph.aget_state({'configurable':{'thread_id':result['task_id']}})
+                assert not snapshot.values
 
 @pytest.mark.asyncio
 async def test_active_project_cannot_be_deleted():
@@ -464,3 +466,24 @@ async def test_stopped_task_is_terminal_and_cannot_resume(monkeypatch):
             stream=await client.get('/api/tasks/'+tid+'/events')
             assert workflow.GENERATION_FAILURE_MESSAGE in stream.text
             assert 'event: settled' in stream.text
+
+
+@pytest.mark.asyncio
+async def test_unfinished_project_can_be_opened_and_permanently_deleted():
+    from httpx import AsyncClient,ASGITransport
+    from backend.main import app
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),base_url='http://test') as client:
+            first=(await client.post('/api/projects',json={'prompt':'待确认设计','demo':True,'wants_design':True})).json()
+            second=(await client.post('/api/projects',json={'prompt':'保留的项目','demo':True,'wants_design':True})).json()
+            for _ in range(100):
+                project=(await client.get('/api/projects/'+first['project_id'])).json()
+                other=(await client.get('/api/projects/'+second['project_id'])).json()
+                if project['tasks'][-1]['status']=='needs_input' and other['tasks'][-1]['status']=='needs_input':break
+                await asyncio.sleep(.02)
+            assert project['tasks'][-1]['status']=='needs_input'
+            assert (await client.post('/api/projects/'+first['project_id']+'/delete',json={})).status_code==200
+            assert (await client.get('/api/projects/'+first['project_id'])).status_code==404
+            assert (await client.get('/api/projects/'+second['project_id'])).status_code==200
+            assert (await app.state.graph.aget_state({'configurable':{'thread_id':second['task_id']}})).values
+            assert not (await app.state.graph.aget_state({'configurable':{'thread_id':first['task_id']}})).values
