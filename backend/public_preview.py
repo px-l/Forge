@@ -1,11 +1,12 @@
 """Read-only shared application shell; generated scripts run in an opaque iframe."""
 import json
+import secrets
 
 
 def render(html: str, namespace: str) -> str:
     encoded = json.dumps(html, ensure_ascii=False).replace('<', '\\u003c')
     return '''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>网站预览</title><style>html,body,iframe{margin:0;width:100%;height:100%;border:0;display:block}</style></head><body><iframe title="网站预览" sandbox="allow-scripts allow-forms"></iframe><script>
-const frame=document.querySelector('iframe'), key='forge-shared-''' + namespace + '''',token=crypto.randomUUID();
+const frame=document.querySelector('iframe'), key='forge-shared-''' + namespace + '''',token=''' + json.dumps(secrets.token_urlsafe(32)) + ''';
 let local={},session={};try{local=JSON.parse(localStorage.getItem(key)||'{}')}catch{}try{session=JSON.parse(sessionStorage.getItem(key)||'{}')}catch{}
 function storageBridge(localSeed,sessionSeed,token){
 function storage(seed,area){let values=Object.assign(Object.create(null),seed);function save(){parent.postMessage({token,area,data:values},'*')}return {getItem:k=>values[String(k)]??null,setItem:(k,v)=>{values[String(k)]=String(v);save()},removeItem:k=>{delete values[String(k)];save()},clear:()=>{values=Object.create(null);save()},key:i=>Object.keys(values)[Number(i)]??null,get length(){return Object.keys(values).length}}}

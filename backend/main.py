@@ -59,6 +59,8 @@ async def visitor(req: Request, call_next):
             secure=req.url.scheme == "https",
             max_age=31536000,
         )
+    if req.url.path in ("/", "/index.html"):
+        res.headers["Cache-Control"] = "no-cache"
     res.headers["X-Content-Type-Options"] = "nosniff"
     return res
 

@@ -31,6 +31,7 @@ import {
   Trash2,
   FileText,
 } from "lucide-react";
+import { createPreviewToken, copyText } from "./browser";
 import ProjectMemory from "./ProjectMemory";
 import { previewDocument } from "./preview";
 type Artifact = {
@@ -110,6 +111,7 @@ export default function App() {
     [answer, setAnswer] = useState(""),
     [history, setHistory] = useState(false),
     [copied, setCopied] = useState(false),
+    [manualPreviewUrl,setManualPreviewUrl] = useState(""),
     [deleteTarget,setDeleteTarget] = useState<Project|null>(null),
     [deleting,setDeleting] = useState(false),
     [deleted,setDeleted] = useState<Project|null>(null),
@@ -158,7 +160,7 @@ export default function App() {
     if (!code) return;
     try {
       const result = await api('/artifacts/'+code.id+'/share', {});
-      await navigator.clipboard.writeText(result.url);
+      if (!await copyText(result.url)) {setManualPreviewUrl(result.url);return;}
       setCopied(true);
       setTimeout(()=>setCopied(false),2500);
     } catch (e) { setError('复制预览链接失败，请重试。'); }
@@ -237,7 +239,7 @@ export default function App() {
   }, [task?.status, pending?.node]);
   const document = useMemo(() => {
     if (!code || !project) return "";
-    token.current = crypto.randomUUID();
+    token.current = createPreviewToken();
     let data = {};
     try {
       data = JSON.parse(
@@ -889,6 +891,7 @@ export default function App() {
           </div>
         )}
       </main>
+      {manualPreviewUrl&&<div className="modal-backdrop"><div className="modal" role="dialog" aria-modal="true" aria-label="复制预览网址"><h2>复制预览网址</h2><p>浏览器未允许自动复制，请选中下方网址手动复制。</p><input aria-label="预览网址" readOnly value={manualPreviewUrl} style={{width:'100%',padding:12}} onFocus={e=>e.target.select()}/><button className="primary" onClick={()=>setManualPreviewUrl('')}>关闭</button></div></div>}
       {deleteTarget&&<div className="modal-backdrop" onClick={()=>{if(!deleting)setDeleteTarget(null);}}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="delete-project-title"><h2 id="delete-project-title">删除这个项目？</h2><p className="delete-project-name">{deleteTarget.name}</p><p>项目将从列表移除，关联的预览链接将失效。删除后可点击“撤销删除”恢复。</p><div className="memory-actions"><button className="quiet" disabled={deleting} onClick={()=>setDeleteTarget(null)}>取消</button><button className="danger-button" disabled={deleting} onClick={deleteProject}>{deleting?'正在删除…':'确认删除'}</button></div></div></div>}
       {settings && (
         <div className="modal-backdrop" onClick={() => setSettings(false)}>
