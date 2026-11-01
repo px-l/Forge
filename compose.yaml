@@ -1,0 +1,30 @@
+services:
+  app:
+    build: .
+    ports: ["8010:8010"]
+    env_file: .env
+    environment:
+      RUNNER_URL: http://runner:8011
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:8010}
+      DATA_DIR: /app/data
+    volumes: ["forge-data:/app/data"]
+    networks: [default, execution]
+    depends_on: [runner]
+    restart: unless-stopped
+  runner:
+    build:
+      context: .
+      dockerfile: runner/Dockerfile
+    networks: [execution]
+    read_only: true
+    tmpfs: ["/tmp:size=512m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1g
+    pids_limit: 256
+    restart: unless-stopped
+networks:
+  execution:
+    internal: true
+volumes:
+  forge-data:

@@ -1,0 +1,43 @@
+name: forge
+services:
+  app:
+    image: forge-app:latest
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.app
+    env_file: /opt/forge/.env
+    environment:
+      DATA_DIR: /app/data
+      RUNNER_URL: http://runner:8011
+      VISUAL_VALIDATOR: uiproof
+      UIPROOF_SSH_HOST: yun2-uiproof
+      UIPROOF_REMOTE_COMMAND: /opt/uiproof/bin/mcp
+      UIPROOF_TUNNEL_PORT: '49318'
+    ports: ["80:8010"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      - /opt/forge/data:/app/data
+      - /opt/forge/runtime/uiproof-ssh:/home/forge/.ssh:ro
+    networks: [default, execution]
+    depends_on: [runner]
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 1g
+    pids_limit: 128
+  runner:
+    image: forge-runner:latest
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.runner
+    networks: [execution]
+    read_only: true
+    tmpfs: ["/tmp:size=512m,mode=1777"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 1g
+    pids_limit: 256
+    restart: unless-stopped
+networks:
+  execution:
+    internal: true

@@ -1,0 +1,10 @@
+.venv
+**/node_modules
+**/__pycache__
+.env
+.env.*
+.git
+data
+forge/dist
+forge/.openai
+.pytest_cache

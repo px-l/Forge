@@ -1,0 +1,10 @@
+# Reuse the existing verified Chromium environment without modifying UIProof.
+FROM uiproof:20261101
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv && rm -rf /var/lib/apt/lists/*
+RUN python3 -m venv /opt/forge-venv && /opt/forge-venv/bin/pip install --no-cache-dir fastapi uvicorn playwright==1.64.1
+WORKDIR /forge
+COPY runner ./runner
+ENV CHROMIUM_EXECUTABLE_PATH=/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell
+USER node
+CMD ["/opt/forge-venv/bin/uvicorn","runner.main:app","--host","0.0.0.0","--port","8011"]

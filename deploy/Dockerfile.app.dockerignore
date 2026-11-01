@@ -1,0 +1,10 @@
+**
+!requirements.txt
+!backend/
+!backend/**
+!forge/
+!forge/dist/
+!forge/dist/**
+!deploy/
+!deploy/Dockerfile.app
+**/__pycache__/
