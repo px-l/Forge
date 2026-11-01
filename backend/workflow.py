@@ -24,6 +24,7 @@ class State(TypedDict, total=False):
     requirement_id: str
     target: str
     design_id: str
+    design_spec: dict
     html: str
     code_id: str
     feedback: dict
@@ -91,7 +92,7 @@ async def validate(s):
         try:
             r = await client.post(
                 os.getenv("RUNNER_URL", "http://127.0.0.1:8011") + "/validate",
-                json={"html": s["html"], "tests": s.get("tests", []), "viewport": viewport},
+                json={"html": s["html"], "tests": s.get("tests", []), "viewport": viewport, "design_spec": s.get("design_spec") if not s["demo"] else None},
             )
             r.raise_for_status()
             report = r.json()

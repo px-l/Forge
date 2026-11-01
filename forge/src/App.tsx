@@ -32,6 +32,7 @@ import {
   FileText,
 } from "lucide-react";
 import { createPreviewToken, copyText } from "./browser";
+import ReferencePreview from "./ReferencePreview";
 import ProjectMemory from "./ProjectMemory";
 import { previewDocument } from "./preview";
 type Artifact = {
@@ -101,6 +102,7 @@ export default function App() {
     [tab, setTab] = useState("preview"),
     [version, setVersion] = useState(""),
     [phone, setPhone] = useState(false),
+    [referenceSize,setReferenceSize] = useState({width:1664,height:928}),
     [demo, setDemo] = useState(false),
     [design, setDesign] = useState(true),
     [mode, setMode] = useState("new"),
@@ -141,6 +143,9 @@ export default function App() {
     screenshot = [...artifacts]
       .reverse()
       .find((a) => a.kind === "screenshot" && a.content.code_id === code?.id);
+  const previewSpec=code?.content.design_spec || target?.content.spec;
+  const targetSize={...referenceSize,...(previewSpec?{width:previewSpec.width,height:previewSpec.height}:{})};
+  useEffect(()=>{let cancelled=false;const image=new window.Image();image.onload=()=>{if(!cancelled&&image.naturalWidth&&image.naturalHeight)setReferenceSize({width:image.naturalWidth,height:image.naturalHeight});};if(target?.content.image)image.src=target.content.image;return()=>{cancelled=true;};},[target?.id]);
   async function deleteProject() {
     if(!deleteTarget)return;
     setDeleting(true);setError('');
@@ -578,7 +583,7 @@ export default function App() {
                           <strong>{label}</strong>
                           <small>
                             {ev?.status === "running"
-                              ? (ev.summary === "正在重新生成" ? "正在重新生成…" : "正在执行…")
+                              ? ((ev.summary || "正在执行") + "…")
                               : ev?.status === "completed"
                                 ? "产物已保存"
                                 : ev?.status === "failed"
@@ -808,12 +813,8 @@ export default function App() {
               <div className={"canvas-body " + (phone ? "mobile" : "")}>
                 {tab === "preview" ? (
                   code ? (
-                    <iframe
-                      title="生成应用预览"
-                      ref={iframe}
-                      sandbox="allow-scripts allow-forms"
-                      srcDoc={document}
-                    />
+                    <ReferencePreview html={document} width={phone?390:targetSize.width} height={phone?844:targetSize.height} frame={iframe}/>
+
                   ) : (
                     <div className="empty">
                       <div className="empty-orbit">
@@ -843,6 +844,7 @@ export default function App() {
                           : "· AI 生成"}
                       </div>
                       <img alt="目标效果图" src={target.content.image} />
+                      {target.content.spec&&<div className="design-contract-info"><strong>开发约束已锁定</strong><p>{target.content.spec.hero_layout==='two-columns'?'首屏双列':'首屏单列'} · 标题 {target.content.spec.heading_size}px · 正文 {target.content.spec.body_size}px · 模块按规格排列</p><p>图像和代码共用此规格；复杂素材使用可实现的简单 SVG / Canvas 风格。</p></div>}
                     </div>
                   ) : (
                     <div className="empty">
@@ -875,7 +877,7 @@ export default function App() {
                     : "等待首个交付版本"}
                 </span>
                 <span>
-                  {phone ? "390 px" : "自适应预览"} · 浏览器数据独立保存
+                  {phone ? "390 px" : `${targetSize.width} × ${targetSize.height}`} · 浏览器数据独立保存
                 </span>
               </footer>
             </section>

@@ -260,7 +260,7 @@ async def new_task(req: Request, pid: str, body: TaskInput):
         design = store.get_artifact(a["content"].get("design_id", ""))
         if design:
             state.update(
-                {"target": design["content"]["image"], "design_id": design["id"]}
+                {"target": design["content"]["image"], "design_id": design["id"], "design_spec":a["content"].get("design_spec") or design["content"].get("spec")}
             )
         state["requirement_id"] = store.artifact(
             state["task_id"], "requirements", state["requirements"]

@@ -6,6 +6,7 @@ import os
 import secrets
 import tempfile
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 from .design import design_viewport
 
 _lock = asyncio.Lock()
@@ -89,7 +90,8 @@ async def preview_server(html):
     async def handle(reader,writer):
         try:
             request=await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'),5)
-            ok=request.split(b'\r\n',1)[0] == f'GET /{token} HTTP/1.1'.encode()
+            parts=request.split(b'\r\n',1)[0].decode().split(' ')
+            ok=len(parts)==3 and parts[0]=='GET' and urlsplit(parts[1]).path=='/'+token
             payload=body if ok else b'Not found'
             headers=(f'HTTP/1.1 {"200 OK" if ok else "404 Not Found"}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {len(payload)}\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src \'none\'; script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data:; connect-src \'none\'; form-action \'none\'; frame-src \'none\'\r\nConnection: close\r\n\r\n').encode()
             writer.write(headers+payload)
@@ -123,7 +125,7 @@ async def verify(state):
         try:
             async with asyncio.timeout(int(os.getenv('UIPROOF_TIMEOUT','180'))):
                 await mcp.start()
-                job=await mcp.tool('uiproof_verify_image',{'baselineBase64':baseline,'config':{'url':f'http://127.0.0.1:{port}/{token}','viewport':viewport},'context':context})
+                job=await mcp.tool('uiproof_verify_image',{'baselineBase64':baseline,'config':{'url':f'http://127.0.0.1:{port}/{token}?forge_capture=1','viewport':viewport},'context':context})
                 while True:
                     status=await mcp.tool('uiproof_status',{'jobId':job['jobId']})
                     if status['status']=='error':raise UIProofError(status.get('error','UIProof 任务失败'))
