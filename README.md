@@ -202,12 +202,12 @@ APP_ORIGIN=http://localhost:8010 docker compose up --build -d
 
 打开 [http://localhost:8010](http://localhost:8010)。项目数据保存于 `forge-data` 卷，浏览器 Worker 不公开端口。
 
-容器内的 UIProof SSH 别名、主机指纹及授权方式需要单独配置，不会自动继承宿主机设置。部署时将 `APP_ORIGIN` 改为实际访问来源。yun2 已完成程序部署；公网访问还需腾讯云入站规则允许 TCP 80。
+容器内的 UIProof SSH 别名、主机指纹及授权方式需要单独配置，不会自动继承宿主机设置。部署时将 `APP_ORIGIN` 改为实际访问来源。yun2 已完成程序部署，TCP 80 已放行并通过公网访问验证。
 
 
 ### yun2 部署
 
-- 服务器入口：`http://120.53.16.86/`（需腾讯云安全组／轻量防火墙放行 TCP 80）。
+- 服务器入口：`http://120.53.16.86/`（TCP 80 已放行，公网访问已验证）。
 - 发布目录：`/opt/forge/releases/20261101-1`；服务通过 Docker 重启策略自动恢复。
 - 云端 `.env`：`/opt/forge/.env`，权限 `600`，独立复制，不提交 Git。
 - 持久数据：`/opt/forge/data`；本地项目数据没有自动迁移到云端。
