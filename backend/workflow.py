@@ -152,24 +152,27 @@ def difference_ratio(s):
 
 
 MAX_GENERATIONS = 3
-GENERATION_FAILURE_MESSAGE = "当前生成遇到了一些问题，请联系开发人员处理。"
+MAX_DIFFERENCE_RATIO = .30
+GENERATION_FAILURE_MESSAGE = "当前生成暂未满足您的要求，请联系开发人员处理。"
 
 
 def repair_gate(s):
     ratio = difference_ratio(s)
     browser_ok = s.get("feedback", {}).get("browser_passed", False)
     retry_or_stop = "develop" if s.get("repairs", 0) < MAX_GENERATIONS else "stop_generation"
-    if ratio is not None and ratio > .10:
+    if ratio is not None and ratio > MAX_DIFFERENCE_RATIO:
         return retry_or_stop
     if s["passed"]:
         return "deliver"
-    if browser_ok and ratio is not None and ratio <= .10:
+    if s.get("repairs", 0) >= MAX_GENERATIONS:
+        return "stop_generation"
+    if browser_ok and ratio is not None and ratio <= MAX_DIFFERENCE_RATIO:
         return "review_gate"
     return retry_or_stop
 
 
 def stop_generation(s):
-    event(s["task_id"], type="error", message=GENERATION_FAILURE_MESSAGE)
+    event(s["task_id"], type="generation_limit", message=GENERATION_FAILURE_MESSAGE)
     return {"generation_stopped": True, "regenerate": False, "user_accepted": False}
 
 
@@ -179,12 +182,13 @@ def review_gate(s):
     if not isinstance(decision,dict) or type(decision.get("regenerate")) is not bool:
         raise ValueError("请选择保留当前网站或重新生成")
     regenerate = decision["regenerate"]
-    return {"regenerate":regenerate, "user_accepted":not regenerate, "repairs":0 if regenerate else s.get("repairs",0)}
+    return {"regenerate":regenerate, "user_accepted":not regenerate, "repairs":s.get("repairs",0)}
 
 
 async def deliver(s):
-    if s.get("passed") or s.get("user_accepted"):
+    if s.get("passed") or s.get("user_accepted") or s.get("generation_stopped"):
         set_current(s["project_id"], s["code_id"])
+    if s.get("passed") or s.get("user_accepted"):
         memory.complete(s)
     artifact(
         s["task_id"],
@@ -193,7 +197,8 @@ async def deliver(s):
             "code_id": s["code_id"],
             "report_id": s.get("report_id"),
             "passed": s.get("passed", False),
-            "summary": "网站已生成，可在当前窗口预览查看，或复制链接至其他浏览器查看。",
+            "summary": GENERATION_FAILURE_MESSAGE if s.get("generation_stopped") else "网站已生成，可在当前窗口预览查看，或复制链接至其他浏览器查看。",
+            "generation_limit_reached": s.get("generation_stopped", False),
             "user_accepted": s.get("user_accepted",False),
             "preview_url": f"/api/artifacts/{s['code_id']}/preview",
         },
@@ -215,7 +220,7 @@ def build(checkpointer):
     g.add_node("design_gate", design_gate)
     g.add_node("review_gate", review_gate)
     g.add_node("stop_generation", stop_generation)
-    g.add_edge("stop_generation", END)
+    g.add_edge("stop_generation", "deliver")
     g.add_conditional_edges("review_gate", lambda s: "develop" if s.get("regenerate") else "deliver")
     g.add_conditional_edges(
         START, lambda s: "develop" if s["mode"] == "modify" else "clarify"

@@ -278,7 +278,7 @@ async def test_code_tree_is_actual_reproducible_git_tree():
     assert first!=await code_tree('<h1>changed</h1>')
     assert len(first)==40
 
-@pytest.mark.parametrize('ratio,expected',[(0.09,'review_gate'),(0.10,'review_gate'),(0.10001,'develop'),(0.4,'develop')])
+@pytest.mark.parametrize('ratio,expected',[(0.09,'review_gate'),(0.10,'review_gate'),(0.29,'review_gate'),(0.30,'review_gate'),(0.30001,'develop'),(0.4,'develop')])
 def test_visual_threshold_routes(ratio,expected):
     assert workflow.repair_gate({'passed':False,'repairs':1,'feedback':{'browser_passed':True,'uiproof':{'states':[{'ratio':ratio}]}}})==expected
 
@@ -296,16 +296,16 @@ async def test_small_difference_can_be_accepted(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_large_difference_stops_after_three_generations(monkeypatch):
-    async def large(s):return {'passed':False,'feedback':{'browser_passed':True,'uiproof':{'states':[{'ratio':.3}]}}}
+    async def large(s):return {'passed':False,'feedback':{'browser_passed':True,'uiproof':{'states':[{'ratio':.4}]}}}
     monkeypatch.setattr(workflow,'validate',large)
     g=workflow.build(InMemorySaver());cfg={'configurable':{'thread_id':'large-diff'}}
     r=await g.ainvoke(state(wants_design=False),cfg)
     assert r['repairs']==3 and r['generation_stopped']
     assert '__interrupt__' not in r
     with store.conn() as c:
-        assert c.execute("SELECT count(*) FROM artifacts WHERE kind='delivery'").fetchone()[0]==0
+        assert c.execute("SELECT count(*) FROM artifacts WHERE kind='delivery'").fetchone()[0]==1
         errors=[__import__('json').loads(row[0]) for row in c.execute("SELECT payload FROM events WHERE task_id=?",(r['task_id'],))]
-    assert [e['message'] for e in errors if e['type']=='error']==[workflow.GENERATION_FAILURE_MESSAGE]
+    assert [e['message'] for e in errors if e['type']=='generation_limit']==[workflow.GENERATION_FAILURE_MESSAGE]
 
 @pytest.mark.asyncio
 async def test_share_link_works_without_owner_cookie(monkeypatch):
@@ -434,23 +434,26 @@ async def test_active_project_cannot_be_deleted():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('third_passed,expected',[(True,'deliver'),(False,'review_gate')])
-async def test_third_generation_can_still_pass_or_request_small_difference_review(monkeypatch,third_passed,expected):
+@pytest.mark.parametrize('third_passed',[True,False])
+async def test_third_generation_always_delivers(monkeypatch,third_passed):
     async def validation(s):
-        if s['repairs']<3:return {'passed':False,'feedback':{'browser_passed':True,'uiproof':{'states':[{'ratio':.3}]}}}
+        if s['repairs']<3:return {'passed':False,'feedback':{'browser_passed':True,'uiproof':{'states':[{'ratio':.4}]}}}
         return {'passed':third_passed,'feedback':{'browser_passed':True,'uiproof':{'states':[{'ratio':0 if third_passed else .08}]}}}
     monkeypatch.setattr(workflow,'validate',validation)
     r=await workflow.build(InMemorySaver()).ainvoke(state(wants_design=False),{'configurable':{'thread_id':'third-result'}})
-    assert r['repairs']==3 and not r.get('generation_stopped')
-    if expected=='review_gate':assert r['__interrupt__'][0].value['node']=='review'
-    else:assert r['passed'] and '__interrupt__' not in r
+    assert r['repairs']==3 and '__interrupt__' not in r
+    assert bool(r.get('generation_stopped')) is not third_passed
+    with store.conn() as c:
+        delivery=__import__('json').loads(c.execute("SELECT content FROM artifacts WHERE kind='delivery'").fetchone()[0])
+    assert delivery['generation_limit_reached'] is not third_passed
+    if not third_passed:assert delivery['summary']==workflow.GENERATION_FAILURE_MESSAGE
 
 
 @pytest.mark.asyncio
-async def test_stopped_task_is_terminal_and_cannot_resume(monkeypatch):
+async def test_three_attempt_task_delivers_and_completes_without_resume(monkeypatch):
     from httpx import AsyncClient,ASGITransport
     from backend.main import app
-    async def large(s):return {'passed':False,'feedback':{'browser_passed':True,'uiproof':{'states':[{'ratio':.3}]}}}
+    async def large(s):return {'passed':False,'feedback':{'browser_passed':True,'uiproof':{'states':[{'ratio':.4}]}}}
     monkeypatch.setattr(workflow,'validate',large)
     async with app.router.lifespan_context(app):
         async with AsyncClient(transport=ASGITransport(app=app),base_url='http://test') as client:
@@ -458,10 +461,10 @@ async def test_stopped_task_is_terminal_and_cannot_resume(monkeypatch):
             pid,tid=result['project_id'],result['task_id']
             for _ in range(100):
                 project=(await client.get('/api/projects/'+pid)).json()
-                if project['tasks'][-1]['status']=='stopped':break
+                if project['tasks'][-1]['status']=='completed':break
                 await asyncio.sleep(.02)
-            assert project['tasks'][-1]['status']=='stopped'
-            assert not project.get('current_code_id')
+            assert project['tasks'][-1]['status']=='completed'
+            assert project.get('current_code_id')
             assert (await client.post('/api/tasks/'+tid+'/resume',json={})).status_code==400
             stream=await client.get('/api/tasks/'+tid+'/events')
             assert workflow.GENERATION_FAILURE_MESSAGE in stream.text
@@ -487,3 +490,16 @@ async def test_unfinished_project_can_be_opened_and_permanently_deleted():
             assert (await client.get('/api/projects/'+second['project_id'])).status_code==200
             assert (await app.state.graph.aget_state({'configurable':{'thread_id':second['task_id']}})).values
             assert not (await app.state.graph.aget_state({'configurable':{'thread_id':first['task_id']}})).values
+
+
+@pytest.mark.asyncio
+async def test_user_regeneration_counts_towards_three_attempt_total(monkeypatch):
+    async def review(s):return {'passed':False,'feedback':{'browser_passed':True,'uiproof':{'states':[{'ratio':.25}]}}}
+    monkeypatch.setattr(workflow,'validate',review)
+    graph=workflow.build(InMemorySaver());cfg={'configurable':{'thread_id':'manual-rounds'}}
+    result=await graph.ainvoke(state(wants_design=False),cfg)
+    assert result['repairs']==1 and result['__interrupt__']
+    result=await graph.ainvoke(Command(resume={'regenerate':True}),cfg)
+    assert result['repairs']==2 and result['__interrupt__']
+    result=await graph.ainvoke(Command(resume={'regenerate':True}),cfg)
+    assert result['repairs']==3 and result['generation_stopped'] and '__interrupt__' not in result

@@ -205,7 +205,7 @@ async def execute(tid, value):
             value, {"configurable": {"thread_id": tid}, "recursion_limit": 24}
         )
         if result.get("generation_stopped"):
-            store.status(tid, "stopped")
+            store.status(tid, "completed")
         elif result.get("__interrupt__"):
             store.event(
                 tid, type="needs_input", request=result["__interrupt__"][0].value

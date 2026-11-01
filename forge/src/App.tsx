@@ -133,6 +133,8 @@ export default function App() {
       .reverse()
       .find((e) => e.type === "needs_input")?.request;
   const relevant = artifacts.filter((a) => a.task_id === task?.id),
+    delivery = [...relevant].reverse().find(a=>a.kind==='delivery'),
+    generationLimitReached = !!delivery?.content.generation_limit_reached,
     target = [...relevant].reverse().find((a) => a.kind === "design") || artifacts.find(a=>a.id===code?.content.design_id),
     requirements = [...relevant]
       .reverse()
@@ -615,7 +617,7 @@ export default function App() {
                       <p key={q}>{q}</p>
                     ))}
                     {pending.node === "review" ? (
-                      <><p>{pending.automatic_limit_reached ? '本轮自动生成已完成，你可以保留当前网站，或继续重新生成。' : '网站与设计仍有少量差异，你可以预览后决定是否重新生成。'}</p><button className="primary" disabled={busy} onClick={()=>resume({regenerate:false})}>保留当前网站</button><button className="quiet" disabled={busy} onClick={()=>resume({regenerate:true})}>重新生成</button></>
+                      <><p>{pending.automatic_limit_reached ? '本轮自动生成已完成，你可以保留当前网站，或继续重新生成。' : '网站与设计的相似度已达到 70% 以上，你可以预览后决定是否重新生成。'}</p><button className="primary" disabled={busy} onClick={()=>resume({regenerate:false})}>保留当前网站</button><button className="quiet" disabled={busy} onClick={()=>resume({regenerate:true})}>重新生成</button></>
                     ) : pending.node === "design" ? (
                       <>
                         <p>在右侧查看设计图，确认后开始代码开发。</p>
@@ -671,8 +673,8 @@ export default function App() {
                   <div className="delivery-note">
                     <CheckCircle2 size={18} />
                     <div>
-                      <strong>{code ? '网站已生成' : '原型已生成'}</strong>
-                      <p>{code ? '可在当前窗口预览查看，或复制链接至其他浏览器查看。' : '可在设计标签中查看原型。'}</p>
+                      <strong>{generationLimitReached ? '已完成' : code ? '网站已生成' : '原型已生成'}</strong>
+                      <p>{generationLimitReached ? delivery?.content.summary : code ? '可在当前窗口预览查看，或复制链接至其他浏览器查看。' : '可在设计标签中查看原型。'}</p>
                       {code && <button className="quiet" onClick={copyPreview}><Copy size={14}/>{copied?'已复制':'复制预览网址'}</button>}
                     </div>
                   </div>
