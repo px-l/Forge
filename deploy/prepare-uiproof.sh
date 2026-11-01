@@ -29,4 +29,6 @@ printf 'yun2-loopback ' > /opt/forge/runtime/uiproof-ssh/known_hosts
 cat /etc/ssh/ssh_host_ed25519_key.pub >> /opt/forge/runtime/uiproof-ssh/known_hosts
 chmod 600 /opt/forge/runtime/uiproof-ssh/config /opt/forge/runtime/uiproof-ssh/known_hosts
 chown -R 10001:10001 /opt/forge/runtime/uiproof-ssh
-install -d -o 10001 -g 10001 -m 700 /opt/forge/data
+mkdir -p /opt/forge/data
+chown 10001:10001 /opt/forge/data
+chmod 700 /opt/forge/data

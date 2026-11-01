@@ -45,7 +45,7 @@ Forge 面向“从想法到可用产物”的创作与交付过程，目标是�
 | 修复与用户决策 | 差异不超过 10% 且交互正常时等待用户选择；超过 10% 自动重新生成一轮，达到上限后交给用户判断 | 按应用类型制定策略、精确修复差异区域、修复成本控制和效果趋势对比 |
 | 版本与交付 | 代码快照、历史版本恢复、HTML 下载及复制只读预览网址 | 版本差异、分支管理、链接撤销和有效期、独立应用发布及自定义域名 |
 | 数据保存与隔离 | SQLite 保存项目、任务、产物和记忆；匿名访客 cookie 隔离；预览支持项目级 localStorage 与标签页级 sessionStorage | 用户身份与权限、跨设备访问、业务数据迁移、备份及产物对象存储 |
-| 演示与本地运行 | 固定待办演示、本地前后端运行、浏览器 Worker 和 Docker Compose 配置 | 全新环境安装验证、完整容器构建验证、云端部署及运行监控 |
+| 演示与部署 | 固定待办演示、本地运行、Docker Compose，以及 yun2 上的应用和隔离 Worker 部署 | 域名与 HTTPS、自动发布回滚、运行监控 |
 
 当前边界：
 
@@ -54,7 +54,7 @@ Forge 面向“从想法到可用产物”的创作与交付过程，目标是�
 - 10% 指 UIProof 的像素差异比例，不等同于功能未完成比例；截图不能证明业务功能正确。
 - 恢复历史代码不回滚业务数据或需求记忆。
 - 预览链接对应指定代码快照，持有者可访问；当前本机地址适用于同一电脑的其他浏览器，跨设备访问需要后续部署。
-- UIProof 已接入现有远端服务；这不代表 Forge 本身已部署到云端。Docker Compose 配置已提供，完整镜像构建曾因 Docker Hub 连接超时未完成。
+- UIProof 已接入现有远端服务；这不代表 Forge 本身已部署到云端。已在 yun2 完成镜像构建并启动 Forge 后端和 Worker；现有 UIProof 容器保持独立。
 
 ## 未来可扩展能力
 
@@ -202,4 +202,26 @@ APP_ORIGIN=http://localhost:8010 docker compose up --build -d
 
 打开 [http://localhost:8010](http://localhost:8010)。项目数据保存于 `forge-data` 卷，浏览器 Worker 不公开端口。
 
-容器内的 UIProof SSH 别名、主机指纹及授权方式需要单独配置，不会自动继承宿主机设置。部署时将 `APP_ORIGIN` 改为实际访问来源。当前尚未完成本项目的云端部署。
+容器内的 UIProof SSH 别名、主机指纹及授权方式需要单独配置，不会自动继承宿主机设置。部署时将 `APP_ORIGIN` 改为实际访问来源。yun2 已完成程序部署；公网访问还需腾讯云入站规则允许 TCP 80。
+
+
+### yun2 部署
+
+- 服务器入口：`http://120.53.16.86/`（需腾讯云安全组／轻量防火墙放行 TCP 80）。
+- 发布目录：`/opt/forge/releases/20261101-1`；服务通过 Docker 重启策略自动恢复。
+- 云端 `.env`：`/opt/forge/.env`，权限 `600`，独立复制，不提交 Git。
+- 持久数据：`/opt/forge/data`；本地项目数据没有自动迁移到云端。
+- 服务：`forge-app-1`（80 → 8010）、`forge-runner-1`（内部网络，无公网端口）。
+- 部署配置：`deploy/compose.yun2.yaml`；部署专用镜像使用已验证的前端构建产物，浏览器 Worker 复用服务器已有 `uiproof:20261101` 镜像环境，不更改现有 UIProof 容器。
+- UIProof：专用受限账号只可执行 `/opt/uiproof/bin/mcp`，只允许 `127.0.0.1:49318` 回环转发。应用不持有本机 SSH 私钥，也不挂载 Docker 管理 socket。`deploy/prepare-uiproof.sh` 涉及账号与 sudo 授权，首次配置须经管理员明确批准。
+
+服务器上管理服务：
+
+```bash
+cd /opt/forge/releases/20261101-1
+docker compose -f deploy/compose.yun2.yaml ps
+docker compose -f deploy/compose.yun2.yaml logs --tail 100 app
+docker compose -f deploy/compose.yun2.yaml restart app
+```
+
+已验证云端模型最小调用返回 200、Worker 交互与截图、UIProof 连接和像素比较、演示任务交付、需求记忆保存及无工作台登录态的预览链接访问。UIProof 示例不匹配设计图时正确返回不通过。当前没有配置域名与 HTTPS。
