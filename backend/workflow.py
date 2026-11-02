@@ -20,6 +20,7 @@ class State(TypedDict, total=False):
     memory: dict
     memory_id: str
     tests: list
+    request_history: list
     requirements: dict
     requirement_id: str
     target: str
@@ -210,6 +211,7 @@ def build(checkpointer):
     g = StateGraph(State)
     for name, fn in [
         ("clarify", nodes.clarify),
+        ("refine_requirements", nodes.refine_requirements),
         ("design", nodes.design),
         ("develop", nodes.develop),
         ("validate", validate),
@@ -223,8 +225,9 @@ def build(checkpointer):
     g.add_edge("stop_generation", "deliver")
     g.add_conditional_edges("review_gate", lambda s: "develop" if s.get("regenerate") else "deliver")
     g.add_conditional_edges(
-        START, lambda s: "develop" if s["mode"] == "modify" else "clarify"
+        START, lambda s: "refine_requirements" if s["mode"] == "modify" else "clarify"
     )
+    g.add_edge("refine_requirements", "develop")
     g.add_edge("clarify", "clarify_gate")
     g.add_conditional_edges(
         "clarify_gate",

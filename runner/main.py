@@ -2,15 +2,15 @@ import base64, os, asyncio
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from typing import Literal
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, expect
 
 app = FastAPI(title="Isolated browser runner")
 
 
 class Step(BaseModel):
-    action: Literal["fill", "click", "expect_text", "reload"]
+    action: Literal["fill", "click", "expect_text", "reload", "expect_text_exact", "expect_disabled", "expect_enabled", "try_click", "press", "seed_storage", "expect_storage"]
     selector: str = Field(default="", max_length=300)
-    value: str = Field(default="", max_length=500)
+    value: str = Field(default="", max_length=12000)
 
 
 class Viewport(BaseModel):
@@ -22,7 +22,7 @@ class Input(BaseModel):
     html: str = Field(max_length=400000)
     viewport: Viewport = Field(default_factory=Viewport)
     design_spec: dict | None = None
-    tests: list[Step] = Field(default_factory=list, max_length=12)
+    tests: list[Step] = Field(default_factory=list, max_length=20)
 
 
 @app.post("/validate")
@@ -41,7 +41,7 @@ async def validate(body: Input):
             await context.route("**/*", lambda route: route.abort())
             page = await context.new_page()
             await page.add_init_script(
-                "window.__FORGE_CAPTURE__=true;window.alert=()=>{};window.confirm=()=>false;window.prompt=()=>null;"
+                "window.__FORGE_CAPTURE__=new URLSearchParams(location.search).get('forge_capture')==='1';window.alert=()=>{};window.confirm=()=>false;window.prompt=()=>null;"
             )
             page.on("pageerror", lambda e: errors.append(str(e)[:400]))
             # Same-origin inert route supports localStorage; all other networking is denied.
@@ -85,6 +85,8 @@ async def validate(body: Input):
                   return {passed:issues.length===0,issues};
                 }""",body.design_spec)
             shot = await page.screenshot(type="png", timeout=10000)
+            # Screenshot uses fixed capture state; interactions run in normal application mode.
+            await page.goto("http://preview.invalid/", wait_until="load", timeout=15000)
             interactions = []
             for step in body.tests:
                 try:
@@ -93,9 +95,30 @@ async def validate(body: Input):
                     elif step.action == "click":
                         await page.locator(step.selector).click(timeout=2500)
                     elif step.action == "expect_text":
-                        await page.get_by_text(step.value, exact=False).first.wait_for(
-                            state="visible", timeout=2500
-                        )
+                        if step.selector:
+                            await expect(page.locator(step.selector)).to_contain_text(step.value,timeout=2500)
+                        else:
+                            await page.get_by_text(step.value, exact=False).first.wait_for(state="visible", timeout=2500)
+                    elif step.action == "expect_text_exact":
+                        await expect(page.locator(step.selector)).to_have_text(step.value, timeout=2500)
+                    elif step.action == "expect_disabled":
+                        await expect(page.locator(step.selector)).to_be_disabled(timeout=2500)
+                    elif step.action == "expect_enabled":
+                        await expect(page.locator(step.selector)).to_be_enabled(timeout=2500)
+                    elif step.action == "try_click":
+                        locator = page.locator(step.selector)
+                        if await locator.is_enabled():
+                            await locator.click(timeout=2500)
+                    elif step.action == "press":
+                        await page.locator(step.selector).press(step.value, timeout=2500)
+                    elif step.action == "seed_storage":
+                        await page.evaluate("([key,value])=>localStorage.setItem(key,value)", [step.selector,step.value])
+                    elif step.action == "expect_storage":
+                        import json
+                        actual = json.loads(await page.evaluate("key=>localStorage.getItem(key)",step.selector) or 'null')
+                        expected = json.loads(step.value)
+                        if not isinstance(actual,dict) or not isinstance(expected,dict) or any(actual.get(k)!=v for k,v in expected.items()):
+                            raise ValueError("存档与预期状态不一致")
                     elif step.action == "reload":
                         await page.reload(wait_until="load", timeout=5000)
                     interactions.append({"action": step.action, "passed": True})

@@ -70,3 +70,26 @@ async def test_capture_url_accepts_query_and_keeps_token_protection():
             invalid=await client.get(f'http://127.0.0.1:{port}/wrong?forge_capture=1')
     assert valid.status_code==200 and 'capture fixture' in valid.text
     assert invalid.status_code==404
+
+
+@pytest.mark.asyncio
+async def test_modify_requirements_include_failed_prior_requests(tmp_path,monkeypatch):
+    monkeypatch.setattr(store,'DB',tmp_path/'db');store.init()
+    captured={}
+    async def ask(tid,system,prompt,**kw):
+        captured.update(json.loads(prompt))
+        return {'features':['2048游戏','单步撤销'],'acceptance':['撤销后禁用按钮','刷新后保持禁用']}
+    monkeypatch.setattr(nodes,'ask',ask)
+    result=await nodes.refine_requirements({'task_id':'test','demo':False,'prompt':'修好上次修改','requirements':{'features':['2048游戏']},'request_history':['增加撤销一步功能']})
+    assert captured['requests']==['增加撤销一步功能']
+    assert '单步撤销' in result['requirements']['features']
+    assert '刷新后保持禁用' in store.get_artifact(result['requirement_id'])['content']['acceptance']
+
+
+@pytest.mark.asyncio
+async def test_modify_requirements_reject_missing_acceptance(tmp_path,monkeypatch):
+    monkeypatch.setattr(store,'DB',tmp_path/'db');store.init()
+    async def ask(*args,**kwargs):return {'features':['撤销']}
+    monkeypatch.setattr(nodes,'ask',ask)
+    with pytest.raises(ValueError,match='验收标准'):
+        await nodes.refine_requirements({'task_id':'test','demo':False,'prompt':'撤销','requirements':{}})

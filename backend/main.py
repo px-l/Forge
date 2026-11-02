@@ -243,9 +243,13 @@ async def new_task(req: Request, pid: str, body: TaskInput):
         ).fetchone()
         if running:
             raise HTTPException(409, "当前项目有未结束任务，请先继续或取消")
+    with store.conn() as c:
+        recent=c.execute('SELECT payload FROM tasks WHERE project_id=? ORDER BY created DESC LIMIT 12',(pid,)).fetchall()
+    request_history=[json.loads(row['payload']).get('prompt','') for row in reversed(recent)]
     snapshot=memory.read(pid)
     if not snapshot["goal"]:snapshot["goal"]=body.prompt
     state = {
+        "request_history":request_history,
         "memory":snapshot,
         "task_id": store.uid(),
         "project_id": pid,
