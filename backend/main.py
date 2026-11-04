@@ -12,6 +12,8 @@ from langgraph.types import Command
 load_dotenv()
 from . import store, memory
 from .workflow import build
+from .source_files import snapshot as source_snapshot, apply_changes, NAMES
+from .design_spec import constrain
 from .agents.model import code_model
 
 workers: dict[str, asyncio.Task] = {}
@@ -163,6 +165,7 @@ class TaskInput(BaseModel):
     demo: bool = False
     wants_design: bool = False
     base_code_id: str | None = None
+    selection: str | None = Field(default=None, max_length=500)
 
 
 @app.post("/api/projects")
@@ -267,6 +270,8 @@ async def new_task(req: Request, pid: str, body: TaskInput):
         if t["project_id"] != pid:
             raise HTTPException(400, "代码不属于当前项目")
         state["html"] = a["content"]["html"]
+        state["files"] = source_snapshot(a["content"])
+        state["selection"] = body.selection
         prior = store.get_artifact(a["content"].get("requirement_id", ""))
         state["requirements"] = {
             **(prior["content"] if prior else {}),
@@ -293,6 +298,7 @@ async def new_task(req: Request, pid: str, body: TaskInput):
 
 class RestoreInput(BaseModel):
     code_id: str
+    file: str | None = None
 
 
 @app.post("/api/projects/{pid}/restore")
@@ -310,6 +316,24 @@ async def restore(req: Request, pid: str, body: RestoreInput):
     t = task_owned(req, a["task_id"])
     if t["project_id"] != pid:
         raise HTTPException(400, "版本不属于当前项目")
+    if body.file is not None:
+        if body.file not in NAMES:
+            raise HTTPException(400, "文件不受支持")
+        current = store.get_artifact(owned(req, pid)["current_code_id"])
+        if not current:
+            raise HTTPException(409, "没有当前交付版本")
+        if body.file not in source_snapshot(current["content"]) and body.file not in source_snapshot(a["content"]):
+            raise HTTPException(404, "文件不存在")
+        try:
+            files, html = apply_changes(source_snapshot(current["content"]), {body.file: source_snapshot(a["content"]).get(body.file)})
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        content = dict(current["content"], files=files, html=html, summary=f"恢复文件 {body.file}")
+        if content.get("design_spec"):
+            content["html"] = constrain(html, content["design_spec"])
+        new_id = store.artifact(current["task_id"], "code", content)
+        store.set_current(pid, new_id)
+        return {"ok": True, "code_id": new_id}
     store.set_current(pid, a["id"])
     store.event(
         a["task_id"],
@@ -407,6 +431,24 @@ async def download(req: Request, aid: str):
         media_type="application/octet-stream",
         headers={"Content-Disposition": 'attachment; filename="index.html"'},
     )
+
+
+@app.get("/api/artifacts/{aid}/source.zip")
+async def download_sources(req: Request, aid: str):
+    from io import BytesIO
+    from zipfile import ZipFile, ZIP_DEFLATED
+
+    a = store.get_artifact(aid)
+    if not a or a["kind"] != "code":
+        raise HTTPException(404)
+    task_owned(req, a["task_id"])
+    buffer = BytesIO()
+    with ZipFile(buffer, "w", ZIP_DEFLATED) as archive:
+        for name, content in source_snapshot(a["content"]).items():
+            archive.writestr(name, content)
+        archive.writestr("preview.html", a["content"]["html"])
+    return Response(buffer.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": 'attachment; filename="forge-source.zip"'})
 
 
 @app.get("/api/artifacts/{aid}/report")

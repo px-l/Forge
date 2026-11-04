@@ -20,6 +20,9 @@ class State(TypedDict, total=False):
     memory: dict
     memory_id: str
     tests: list
+    files: dict
+    selection: str
+    page_cases: list
     request_history: list
     requirements: dict
     requirement_id: str
@@ -90,24 +93,40 @@ def design_gate(s):
 
 async def validate(s):
     viewport = design_viewport(s.get("target"))
-    async with httpx.AsyncClient(timeout=55) as client:
+    page_cases = s.get("page_cases") or [{"path": "/", "state": "initial", "tests": s.get("tests", [])}]
+    primary = next((case for case in page_cases if case["path"] == "/" and case["state"] == "initial"), page_cases[0])
+    ordered = [primary] + [case for case in page_cases if case is not primary]
+    reports = []
+    screenshots = []
+    multi = any(case["path"] != "/" for case in ordered)
+    async with httpx.AsyncClient(timeout=70) as client:
         try:
-            r = await client.post(
-                os.getenv("RUNNER_URL", "http://127.0.0.1:8011") + "/validate",
-                json={"html": s["html"], "tests": s.get("tests", []), "viewport": viewport, "design_spec": s.get("design_spec") if not s["demo"] else None},
-            )
-            r.raise_for_status()
-            report = r.json()
+            for case in ordered:
+                home = case["path"] == "/" and case["state"] == "initial"
+                r = await client.post(
+                    os.getenv("RUNNER_URL", "http://127.0.0.1:8011") + "/validate",
+                    json={"html": s["html"], "tests": case["tests"], "viewport": viewport,
+                          "design_spec": s.get("design_spec") if home and not s["demo"] else None,
+                          "route": case["path"] if multi else None, "state": case["state"]},
+                )
+                r.raise_for_status()
+                page_report = r.json()
+                shot = page_report.pop("screenshot", None)
+                page_report.update(path=case["path"], state=case["state"])
+                if shot:
+                    screenshots.append(shot)
+                    artifact(s["task_id"], "screenshot", {
+                        "image": shot, "code_id": s["code_id"], "viewport": viewport,
+                        "path": case["path"], "state": case["state"],
+                    })
+                reports.append(page_report)
+            report = dict(reports[0], passed=all(page.get("passed", False) for page in reports), pages=reports)
         except httpx.HTTPError as e:
             raise RuntimeError(
                 "浏览器执行服务不可用。请启动 runner 后点击重试；代码产物已保留。"
             ) from e
     report["browser_passed"] = report.get("passed", False)
-    screenshot = report.pop("screenshot", None)
-    if screenshot:
-        artifact(
-            s["task_id"], "screenshot", {"image": screenshot, "code_id": s["code_id"], "viewport": viewport}
-        )
+    screenshot = screenshots[0] if screenshots else None
     # Interaction checks remain local; UIProof is the visual acceptance gate.
     provider = os.getenv("VISUAL_VALIDATOR", "uiproof")
     if s.get("target") and provider == "uiproof":

@@ -35,6 +35,7 @@ import { createPreviewToken, copyText } from "./browser";
 import ReferencePreview from "./ReferencePreview";
 import ProjectMemory from "./ProjectMemory";
 import { previewDocument } from "./preview";
+import SourceFiles from "./SourceFiles";
 type Artifact = {
   id: string;
   task_id: string;
@@ -95,6 +96,9 @@ const statuses: Record<string, string> = {
   needs_review: "待人工检查",
 };
 export default function App() {
+  const [picking, setPicking] = useState(false);
+  const [selection, setSelection] = useState("");
+  const [pageEvidence, setPageEvidence] = useState("");
   const [projects, setProjects] = useState<Project[]>([]),
     [project, setProject] = useState<Project | null>(null),
     [taskId, setTaskId] = useState(""),
@@ -263,6 +267,10 @@ export default function App() {
         !project
       )
         return;
+      if (e.data.type === "picked" && typeof e.data.selection === "string") {
+        setSelection(e.data.selection.slice(0, 500));
+        setPicking(false);
+      }
       if (e.data.type === "storage") {
         try {
           const raw = JSON.stringify(e.data.data);
@@ -279,6 +287,18 @@ export default function App() {
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);
   }, [project?.id]);
+  useEffect(() => {
+    setSelection("");
+    setPicking(false);
+    setPageEvidence("");
+  }, [code?.id, project?.id]);
+
+  function pick(enabled: boolean) {
+    setPicking(enabled);
+    if (!enabled) setSelection("");
+    iframe.current?.contentWindow?.postMessage({ forge: token.current, type: "pick", enabled }, "*");
+  }
+
   async function submit(text = prompt) {
     if (!text.trim() || active) return;
     setBusy(true);
@@ -290,6 +310,7 @@ export default function App() {
         wants_design: design,
         mode: project && code ? "modify" : mode,
         base_code_id: code?.id,
+        selection: project && code && selection ? selection : undefined,
       };
       const r = project
         ? await api("/projects/" + project.id + "/tasks", body)
@@ -682,6 +703,7 @@ export default function App() {
                 <div ref={end} />
               </div>
               <div className="followup">
+                {selection && <div className="selection-note">已选中组件 · 下一条修改将针对该组件 <button onClick={() => pick(false)}>清除</button></div>}
                 <div className="composer">
                   <textarea
                     aria-label="修改要求"
@@ -750,6 +772,8 @@ export default function App() {
                   ))}
                 </div>
                 <div className="tools">
+                  {code && tab === "preview" && <button aria-pressed={picking} disabled={active} onClick={() => pick(!picking)}>{picking ? "取消选取" : "选取组件"}</button>}
+                  {code && tab === "code" && <a href={"/api/artifacts/" + code.id + "/source.zip"}>源码 ZIP</a>}
                   {code && <button title="复制预览网址" aria-label="复制预览网址" onClick={copyPreview}><Copy size={16}/>{copied && <span>已复制</span>}</button>}
                   <button title="历史版本" onClick={() => setHistory(!history)}>
                     <History size={16} />
@@ -805,7 +829,7 @@ export default function App() {
                     : tab === "design"
                       ? "目标设计 · 开发参考"
                       : tab === "code"
-                        ? "源代码 · 完整快照"
+                        ? "源代码 · 文件版本"
                         : "需求说明 · 已梳理"}
                 </div>
                 <button title="切换预览尺寸" onClick={() => setPhone(!phone)}>
@@ -815,7 +839,16 @@ export default function App() {
               <div className={"canvas-body " + (phone ? "mobile" : "")}>
                 {tab === "preview" ? (
                   code ? (
-                    <ReferencePreview html={document} width={phone?390:targetSize.width} height={phone?844:targetSize.height} frame={iframe}/>
+                    <>
+                      {report?.content.pages?.length > 1 && <div className="page-evidence">
+                        <label>页面验收 <select value={pageEvidence} onChange={e=>setPageEvidence(e.target.value)}>
+                          <option value="">实时预览</option>
+                          {report?.content.pages.map((p:any)=><option key={p.path + "|" + p.state} value={p.path+"|"+p.state}>{p.path} · {p.state} · {p.passed ? "通过" : "未通过"}</option>)}
+                        </select></label>
+                        {pageEvidence && artifacts.filter(a=>a.kind==="screenshot" && a.content.code_id===code.id && a.content.path+"|"+a.content.state===pageEvidence).slice(-1).map(a=><img key={a.id} src={a.content.image} alt="页面验收截图"/>)}
+                      </div>}
+                      <ReferencePreview html={document} width={phone?390:targetSize.width} height={phone?844:targetSize.height} frame={iframe}/>
+                    </>
 
                   ) : (
                     <div className="empty">
@@ -846,6 +879,7 @@ export default function App() {
                           : "· AI 生成"}
                       </div>
                       <img alt="目标效果图" src={target.content.image} />
+                      {target.content.spec && <details className="design-contract-info"><summary>结构化设计 JSON</summary><pre className="source">{JSON.stringify(target.content.spec,null,2)}</pre></details>}
                       {target.content.spec&&<div className="design-contract-info"><strong>开发约束已锁定</strong><p>{target.content.spec.hero_layout==='two-columns'?'首屏双列':'首屏单列'} · 标题 {target.content.spec.heading_size}px · 正文 {target.content.spec.body_size}px · 模块按规格排列</p><p>图像和代码共用此规格；复杂素材使用可实现的简单 SVG / Canvas 风格。</p></div>}
                     </div>
                   ) : (
@@ -857,7 +891,13 @@ export default function App() {
                   )
                 ) : tab === "code" ? (
                   code ? (
-                    <pre className="source">{code.content.html}</pre>
+                    <SourceFiles key={code.id} files={code.content.files || {"index.html": code.content.html}}
+                      versions={codes.filter(a => a.id !== code.id)} disabled={active}
+                      restore={async (id, file) => {
+                        const result = await api("/projects/" + project.id + "/restore", {code_id:id,file});
+                        await refresh(project.id);
+                        setVersion(result.code_id);
+                      }} />
                   ) : (
                     <div className="empty">
                       <Code2 size={32} />

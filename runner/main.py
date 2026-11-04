@@ -22,6 +22,8 @@ class Input(BaseModel):
     html: str = Field(max_length=400000)
     viewport: Viewport = Field(default_factory=Viewport)
     design_spec: dict | None = None
+    route: str | None = Field(default=None, pattern=r"^/(?:[a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)*)?$", max_length=100)
+    state: str = Field(default="initial", max_length=80)
     tests: list[Step] = Field(default_factory=list, max_length=20)
 
 
@@ -48,7 +50,7 @@ async def validate(body: Input):
             await context.unroute("**/*")
 
             async def route(r):
-                if r.request.url.split("?",1)[0] == "http://preview.invalid/":
+                if r.request.url.split("#",1)[0].split("?",1)[0] == "http://preview.invalid/":
                     await r.fulfill(
                         body=body.html,
                         content_type="text/html; charset=utf-8",
@@ -60,15 +62,18 @@ async def validate(body: Input):
                     await r.abort()
 
             await context.route("**/*", route)
-            await page.goto("http://preview.invalid/?forge_capture=1", wait_until="load", timeout=15000)
+            fragment = "#" + body.route if body.route else ""
+            query = "?forge_capture=1" if body.state == "initial" and body.route in (None, "/") else ""
+            await page.goto("http://preview.invalid/" + query + fragment, wait_until="load", timeout=15000)
             await page.wait_for_timeout(350)
             checks = await page.evaluate(
                 """()=>({has_content:document.body.innerText.trim().length>5,horizontal_overflow:document.documentElement.scrollWidth>innerWidth+2,controls:document.querySelectorAll('button,input,select,textarea').length})"""
             )
+            route_ok = not body.route or await page.locator(f'[data-forge-route="{body.route}"]:visible').count() == 1
             layout = {"passed":True,"issues":[]}
             if body.design_spec:
                 layout=await page.evaluate("""spec=>{
-                  const issues=[],all=[...document.querySelectorAll('[data-forge-section]')];let last=-1;
+                  const issues=[],all=[...document.querySelectorAll('[data-forge-section]')].filter(n=>n.getClientRects().length);let last=-1;
                   for(const section of spec.sections||[]){
                     const nodes=all.filter(n=>n.dataset.forgeSection===section.id);
                     if(nodes.length!==1){issues.push({area:section.id,issue:'模块缺失或重复',expected:1,actual:nodes.length});continue;}
@@ -81,12 +86,24 @@ async def validate(body: Input):
                       if(positions.size!==expected)issues.push({area:section.id,issue:'桌面列数不一致',expected,actual:positions.size});
                     }
                   }
+                  for (const section of spec.sections || []) {
+                    const root = all.find(node => node.dataset.forgeSection === section.id);
+                    if (!root) continue;
+                    for (const element of section.elements || []) {
+                      if (!element.visible_on_load) continue;
+                      const found = [...root.querySelectorAll('[data-forge-element]')].some(node =>
+                        node.dataset.forgeElement === element.id && node.getClientRects().length &&
+                        getComputedStyle(node).visibility === 'visible');
+                      if (!found) issues.push({area:element.id,issue:'关键元素首屏不可见'});
+                    }
+                  }
                   if(!document.querySelector('[data-forge-title]'))issues.push({area:'title',issue:'缺少主标题标记'});
                   return {passed:issues.length===0,issues};
                 }""",body.design_spec)
             shot = await page.screenshot(type="png", timeout=10000)
             # Screenshot uses fixed capture state; interactions run in normal application mode.
-            await page.goto("http://preview.invalid/", wait_until="load", timeout=15000)
+            if query:
+                await page.goto("http://preview.invalid/" + fragment, wait_until="load", timeout=15000)
             interactions = []
             for step in body.tests:
                 try:
@@ -127,8 +144,11 @@ async def validate(body: Input):
                         {"action": step.action, "passed": False, "error": str(e)[:500]}
                     )
                     break
+            if body.state != "initial":
+                shot = await page.screenshot(type="png", timeout=10000)
+            checks["route_visible"] = bool(route_ok)
             return {
-                "passed": checks["has_content"]
+                "passed": route_ok and checks["has_content"]
                 and not checks["horizontal_overflow"]
                 and not errors
                 and layout["passed"]

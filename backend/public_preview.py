@@ -10,6 +10,10 @@ const frame=document.querySelector('iframe'), key='forge-shared-''' + namespace 
 let local={},session={};try{local=JSON.parse(localStorage.getItem(key)||'{}')}catch{}try{session=JSON.parse(sessionStorage.getItem(key)||'{}')}catch{}
 function storageBridge(localSeed,sessionSeed,token){
 function storage(seed,area){let values=Object.assign(Object.create(null),seed);function save(){parent.postMessage({token,area,data:values},'*')}return {getItem:k=>values[String(k)]??null,setItem:(k,v)=>{values[String(k)]=String(v);save()},removeItem:k=>{delete values[String(k)];save()},clear:()=>{values=Object.create(null);save()},key:i=>Object.keys(values)[Number(i)]??null,get length(){return Object.keys(values).length}}}
+addEventListener('click',e=>{
+const link=e.target instanceof Element && e.target.closest('a[href^="#/"]');
+if(link){e.preventDefault();location.hash=link.getAttribute('href')}
+},true);
 Object.defineProperty(window,'localStorage',{value:storage(localSeed,'local')});Object.defineProperty(window,'sessionStorage',{value:storage(sessionSeed,'session')});
 }
 const safe=v=>JSON.stringify(v).replace(/</g,'\\\\u003c');

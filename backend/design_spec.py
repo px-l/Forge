@@ -4,10 +4,20 @@ from pydantic import BaseModel, Field
 from typing import Literal
 
 
+class Element(BaseModel):
+    id: str = Field(pattern=r'^[a-z][a-z0-9-]{0,50}$')
+    role: str = Field(max_length=50)
+    text: str = Field(default="", max_length=160)
+    visible_on_load: bool = True
+    # Normalized image coordinates x, y, width, height. They are visual estimates.
+    bounds: tuple[float, float, float, float] | None = None
+
+
 class Section(BaseModel):
     id: str = Field(pattern=r'^[a-z][a-z0-9-]{0,30}$')
     label: str = Field(max_length=80)
     columns: int = Field(default=1,ge=1,le=4)
+    elements: list[Element] = Field(default_factory=list, max_length=12)
 
 
 class Spec(BaseModel):
@@ -33,6 +43,14 @@ def normalize(value, viewport=None):
     spec=Spec.model_validate(value).model_dump()
     if len({s['id'] for s in spec['sections']}) != len(spec['sections']):
         raise ValueError('设计规格的模块ID不能重复')
+    ids = [e["id"] for section in spec["sections"] for e in section["elements"]]
+    if len(ids) != len(set(ids)):
+        raise ValueError("元素 ID 必须唯一")
+    for section in spec["sections"]:
+        for element in section["elements"]:
+            box = element["bounds"]
+            if box and (not all(0 <= x <= 1 for x in box) or box[2] <= 0 or box[3] <= 0 or box[0] + box[2] > 1.001 or box[1] + box[3] > 1.001):
+                raise ValueError("视觉元素边界超出画布")
     if viewport:spec.update(width=viewport['width'],height=viewport['height'])
     return spec
 
@@ -50,7 +68,7 @@ def stylesheet(spec):
 
 def constrain(html,spec):
     html=re.sub(r'<style\b[^>]*\bid=["\']forge-design-contract["\'][^>]*>[\s\S]*?</style>','',html,flags=re.I)
-    style='<style id="forge-design-contract">'+stylesheet(spec)+'</style>'
+    style='<style id="forge-design-contract">'+stylesheet(spec)+'[data-forge-route][hidden]{display:none!important}</style>'
     if re.search(r'</head\s*>',html,re.I):return re.sub(r'</head\s*>',lambda m:style+m[0],html,count=1,flags=re.I)
     return style+html
 
