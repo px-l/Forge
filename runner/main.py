@@ -1,4 +1,4 @@
-import base64, os, asyncio
+import base64, json, os, asyncio
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from typing import Literal
@@ -69,7 +69,7 @@ async def validate(body: Input):
             checks = await page.evaluate(
                 """()=>({has_content:document.body.innerText.trim().length>5,horizontal_overflow:document.documentElement.scrollWidth>innerWidth+2,controls:document.querySelectorAll('button,input,select,textarea').length})"""
             )
-            route_ok = not body.route or await page.locator(f'[data-forge-route="{body.route}"]:visible').count() == 1
+            route_ok = not body.route or (await page.locator('[data-forge-route]:visible').count() == 1 and await page.locator(f'[data-forge-route="{body.route}"]:visible').count() == 1)
             layout = {"passed":True,"issues":[]}
             if body.design_spec:
                 layout=await page.evaluate("""spec=>{
@@ -91,8 +91,8 @@ async def validate(body: Input):
                     if (!root) continue;
                     for (const element of section.elements || []) {
                       if (!element.visible_on_load) continue;
-                      const found = [...root.querySelectorAll('[data-forge-element]')].some(node =>
-                        node.dataset.forgeElement === element.id && node.getClientRects().length &&
+                      const found = [root, ...root.querySelectorAll('[data-forge-element],[id]')].some(node =>
+                        (node.dataset.forgeElement === element.id || node.id === element.id) && node.getClientRects().length &&
                         getComputedStyle(node).visibility === 'visible');
                       if (!found) issues.push({area:element.id,issue:'关键元素首屏不可见'});
                     }
@@ -131,10 +131,20 @@ async def validate(body: Input):
                     elif step.action == "seed_storage":
                         await page.evaluate("([key,value])=>localStorage.setItem(key,value)", [step.selector,step.value])
                     elif step.action == "expect_storage":
-                        import json
-                        actual = json.loads(await page.evaluate("key=>localStorage.getItem(key)",step.selector) or 'null')
-                        expected = json.loads(step.value)
-                        if not isinstance(actual,dict) or not isinstance(expected,dict) or any(actual.get(k)!=v for k,v in expected.items()):
+                        raw = await page.evaluate("key=>localStorage.getItem(key)", step.selector)
+                        try:
+                            expected = json.loads(step.value)
+                        except json.JSONDecodeError:
+                            expected = step.value
+                        try:
+                            actual = json.loads(raw) if raw is not None else None
+                        except json.JSONDecodeError:
+                            actual = raw
+                        if isinstance(expected, dict):
+                            matches = isinstance(actual, dict) and all(k in actual and actual[k] == v for k, v in expected.items())
+                        else:
+                            matches = actual == expected or raw == step.value
+                        if not matches:
                             raise ValueError("存档与预期状态不一致")
                     elif step.action == "reload":
                         await page.reload(wait_until="load", timeout=5000)
