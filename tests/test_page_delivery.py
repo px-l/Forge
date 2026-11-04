@@ -37,3 +37,12 @@ async def test_secondary_route_failure_blocks_browser_pass(monkeypatch):
     assert requests == [("/", "initial"), ("/items", "initial"), ("/items", "empty")]
     assert not result["passed"] and not result["feedback"]["browser_passed"]
     assert len([content for kind, content in artifacts if kind == "screenshot"]) == 3
+
+
+def test_visual_model_object_coordinates_are_normalized():
+    from backend.design_spec import normalize
+
+    spec = normalize({"sections": [{"id": "hero", "label": "首页", "elements": [
+        {"id": "game", "role": "canvas", "bounds": {"x": .3, "y": .2, "w": .5, "h": .4}}
+    ]}]})
+    assert spec["sections"][0]["elements"][0]["bounds"] == (.3, .2, .5, .4)

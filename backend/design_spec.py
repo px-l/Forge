@@ -1,6 +1,6 @@
 """Shared, validated design contract for image generation, HTML and verification."""
 import re
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Literal
 
 
@@ -11,6 +11,13 @@ class Element(BaseModel):
     visible_on_load: bool = True
     # Normalized image coordinates x, y, width, height. They are visual estimates.
     bounds: tuple[float, float, float, float] | None = None
+
+    @field_validator("bounds", mode="before")
+    @classmethod
+    def accept_object_coordinates(cls, value):
+        if isinstance(value, dict) and all(key in value for key in ("x", "y", "w", "h")):
+            return [value[key] for key in ("x", "y", "w", "h")]
+        return value
 
 
 class Section(BaseModel):
